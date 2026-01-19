@@ -17,6 +17,7 @@ Script/
 # -----------------------------------------------------------------------------
 # Visual Studio Code
 .vscode/
+.vsconfig
 .idea/
 .vs/
 *.code-workspace
