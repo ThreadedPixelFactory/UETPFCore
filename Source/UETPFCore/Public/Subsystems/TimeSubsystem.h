@@ -38,13 +38,6 @@
 
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnSimTimeAdvanced, double);
 
-UENUM(BlueprintType)
-enum class ESimClockMode : uint8
-{
-	RealTime,      // advance by real delta
-	FixedStep      // advance by fixed dt (deterministic)
-};
-
 /**
  * Simulation clock mode - determines how time advances.
  */
