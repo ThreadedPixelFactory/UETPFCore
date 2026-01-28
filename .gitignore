@@ -96,6 +96,17 @@ Documentation/html/
 Documentation/latex/
 
 # -----------------------------------------------------------------------------
+# Third-Party Libraries (download separately)
+# -----------------------------------------------------------------------------
+# SPICE Toolkit binaries (users must download from NASA/JPL)
+Source/UETPFCoreSim/ThirdParty/CSPICE/Win64/
+Source/UETPFCoreSim/ThirdParty/CSPICE/Linux/
+Source/UETPFCoreSim/ThirdParty/CSPICE/Mac/
+
+# Keep the README that explains how to install
+!Source/UETPFCoreSim/ThirdParty/CSPICE/README.md
+
+# -----------------------------------------------------------------------------
 # Packed/Cooked Content (if building separately)
 # -----------------------------------------------------------------------------
 *_BuiltData.uasset
