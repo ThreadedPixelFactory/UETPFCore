@@ -18,6 +18,11 @@
 			"Name": "SinglePlayerStoryTemplate",
 			"Type": "Runtime",
 			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "UETPFCoreSim",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
 		}
 	],
 	"Plugins": [
