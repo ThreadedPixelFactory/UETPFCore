@@ -31,32 +31,64 @@ public class UETPFCoreSim : ModuleRules
 		
 		if (Directory.Exists(SpicePath))
 		{
-			PublicIncludePaths.Add(Path.Combine(SpicePath, "include"));
-			
 			if (Target.Platform == UnrealTargetPlatform.Win64)
 			{
-				string LibPath = Path.Combine(SpicePath, "lib", "Win64");
-				PublicAdditionalLibraries.Add(Path.Combine(LibPath, "cspice.lib"));
+				string IncludePath = Path.Combine(SpicePath, "include", "Win64");
+				string LibPath = Path.Combine(SpicePath, "lib", "Win64", "cspice.lib");
 				
-				// Copy DLL to binaries if exists
-				string DllPath = Path.Combine(SpicePath, "bin", "Win64", "cspice.dll");
-				if (File.Exists(DllPath))
+				if (Directory.Exists(Path.GetDirectoryName(IncludePath)) && File.Exists(LibPath))
 				{
-					RuntimeDependencies.Add("$(BinaryOutputDir)/cspice.dll", DllPath);
+					PublicIncludePaths.Add(IncludePath);
+					PublicAdditionalLibraries.Add(LibPath);
+					PublicIncludePaths.Add(IncludePath);
+					PublicAdditionalLibraries.Add(LibPath);
+					
+					// Copy DLL to binaries if exists
+					string DllPath = Path.Combine(SpicePath, "bin", "Win64", "cspice.dll");
+					if (File.Exists(DllPath))
+					{
+						RuntimeDependencies.Add("$(BinaryOutputDir)/cspice.dll", DllPath);
+					}
+					
+					PublicDefinitions.Add("WITH_SPICE=1");
+				}
+				else
+				{
+					PublicDefinitions.Add("WITH_SPICE=0");
 				}
 			}
 			else if (Target.Platform == UnrealTargetPlatform.Linux)
 			{
-				string LibPath = Path.Combine(SpicePath, "lib", "Linux");
-				PublicAdditionalLibraries.Add(Path.Combine(LibPath, "libcspice.a"));
+				string IncludePath = Path.Combine(SpicePath, "include", "Linux");
+				string LibPath = Path.Combine(SpicePath, "lib", "Linux", "libcspice.a");
+				
+				if (Directory.Exists(Path.GetDirectoryName(IncludePath)) && File.Exists(LibPath))
+				{
+					PublicIncludePaths.Add(IncludePath);
+					PublicAdditionalLibraries.Add(LibPath);
+					PublicDefinitions.Add("WITH_SPICE=1");
+				}
+				else
+				{
+					PublicDefinitions.Add("WITH_SPICE=0");
+				}
 			}
 			else if (Target.Platform == UnrealTargetPlatform.Mac)
 			{
-				string LibPath = Path.Combine(SpicePath, "lib", "Mac");
-				PublicAdditionalLibraries.Add(Path.Combine(LibPath, "libcspice.a"));
+				string IncludePath = Path.Combine(SpicePath, "include", "Mac");
+				string LibPath = Path.Combine(SpicePath, "lib", "Mac", "libcspice.a");
+				
+				if (Directory.Exists(Path.GetDirectoryName(IncludePath)) && File.Exists(LibPath))
+				{
+					PublicIncludePaths.Add(IncludePath);
+					PublicAdditionalLibraries.Add(LibPath);
+					PublicDefinitions.Add("WITH_SPICE=1");
+				}
+				else
+				{
+					PublicDefinitions.Add("WITH_SPICE=0");
+				}
 			}
-			
-			PublicDefinitions.Add("WITH_SPICE=1");
 		}
 		else
 		{
