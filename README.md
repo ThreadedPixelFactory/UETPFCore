@@ -79,6 +79,18 @@ Template module demonstrating single-player game patterns:
 - JSON spec loading (SpecPackLoader)
 - Story game mode and player controller examples
 
+### Optional: Scientific Simulation (UETPFCoreSim)
+
+For aerospace training, educational simulations, and validated ephemerides:
+
+- **SPICE Integration**: NASA/JPL validated celestial mechanics
+- **Deterministic Physics**: Reproducible simulation results (planned)
+- **USD Import/Export**: Omniverse pipeline integration (planned)
+
+See [UETPFCoreSim README](Source/UETPFCoreSim/README.md) for details.
+
+**Note:** This module is for educational and training purposes, not mission-critical applications.
+
 ## Documentation
 
 - **[SETUP.md](SETUP.md)** - Step-by-step setup guide
