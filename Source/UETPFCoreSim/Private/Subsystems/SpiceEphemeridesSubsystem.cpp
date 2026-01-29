@@ -102,8 +102,7 @@ bool USpiceEphemeridesSubsystem::LoadKernel(const FString& KernelPath)
 	}
 
 	// Load kernel
-	std::string PathStd = TCHAR_TO_UTF8(*FullPath);
-	furnsh_c(PathStd.c_str());
+	furnsh_c(TCHAR_TO_UTF8(*FullPath));
 
 	if (failed_c())
 	{
@@ -134,8 +133,7 @@ void USpiceEphemeridesSubsystem::UnloadKernel(const FString& KernelPath)
 		return;
 	}
 
-	std::string PathStd = TCHAR_TO_UTF8(*KernelPath);
-	unload_c(PathStd.c_str());
+	unload_c(TCHAR_TO_UTF8(*KernelPath));
 
 	LoadedKernels.Remove(KernelPath);
 	UE_LOG(LogTemp, Log, TEXT("Unloaded SPICE kernel: %s"), *KernelPath);
@@ -175,17 +173,12 @@ FCelestialStateVector USpiceEphemeridesSubsystem::GetBodyState(
 	double starg[6];
 	double lt;
 
-	std::string TargStd = TCHAR_TO_UTF8(*TargetBody);
-	std::string ObsStd = TCHAR_TO_UTF8(*ObserverBody);
-	std::string RefStd = TCHAR_TO_UTF8(*ReferenceFrame);
-	std::string AbcorrStd = TCHAR_TO_UTF8(*AberrationCorrection);
-
 	spkezr_c(
-		TargStd.c_str(),
+		TCHAR_TO_UTF8(*TargetBody),
 		EphemerisTime.SecondsPastJ2000,
-		RefStd.c_str(),
-		AbcorrStd.c_str(),
-		ObsStd.c_str(),
+		TCHAR_TO_UTF8(*ReferenceFrame),
+		TCHAR_TO_UTF8(*AberrationCorrection),
+		TCHAR_TO_UTF8(*ObserverBody),
 		starg,
 		&lt
 	);
@@ -226,16 +219,12 @@ FVector USpiceEphemeridesSubsystem::GetBodyPosition(
 	double ptarg[3];
 	double lt;
 
-	std::string TargStd = TCHAR_TO_UTF8(*TargetBody);
-	std::string ObsStd = TCHAR_TO_UTF8(*ObserverBody);
-	std::string RefStd = TCHAR_TO_UTF8(*ReferenceFrame);
-
 	spkpos_c(
-		TargStd.c_str(),
+		TCHAR_TO_UTF8(*TargetBody),
 		EphemerisTime.SecondsPastJ2000,
-		RefStd.c_str(),
+		TCHAR_TO_UTF8(*ReferenceFrame),
 		"NONE",
-		ObsStd.c_str(),
+		TCHAR_TO_UTF8(*ObserverBody),
 		ptarg,
 		&lt
 	);
