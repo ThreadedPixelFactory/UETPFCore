@@ -60,6 +60,28 @@ Content/Developers/
 Plugins/Developer/
 
 # -----------------------------------------------------------------------------
+# Third-Party Licensed Content (cannot be redistributed publicly)
+# -----------------------------------------------------------------------------
+# Fab/Megascans assets - contributors must download from Fab directly
+Content/Fab/
+# UE auto-generated external object redirectors
+Content/__ExternalObjects__/
+
+# -----------------------------------------------------------------------------
+# Auto-Generated Engine Config
+# -----------------------------------------------------------------------------
+# Written by the editor on first launch, not project configuration
+Config/DefaultGameUserSettings.ini
+
+# -----------------------------------------------------------------------------
+# Local Resources
+# -----------------------------------------------------------------------------
+# Personal backups, not project configuration
+resources/
+# Windows null device artifact
+nul
+
+# -----------------------------------------------------------------------------
 # Temporary and Backup Files
 # -----------------------------------------------------------------------------
 *.tmp
