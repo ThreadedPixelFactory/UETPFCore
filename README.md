@@ -60,7 +60,7 @@ It provides cognitive structure for projects with a robust **ready-to-build** su
 3. Run `Scripts/editor.bat` to launch the editor
 4. Explore the example content in `Content/TPF/Examples/`
 
-See [SETUP.md](SETUP.md) for detailed setup instructions.
+See [SETUP.md](docs/SETUP.md) for detailed setup instructions.
 
 ## Module Structure
 
@@ -81,9 +81,10 @@ Template module demonstrating single-player game patterns:
 
 ## Documentation
 
-- **[SETUP.md](SETUP.md)** - Step-by-step setup guide
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** - System architecture deep dive
-- **[IMPLEMENTATIONGUIDE.md](IMPLEMENTATIONGUIDE.md)** - Integration guide for your game
+- **[SETUP.md](docs/SETUP.md)** - Step-by-step setup guide
+- **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** - System architecture deep dive
+- **[IMPLEMENTATIONGUIDE.md](docs/IMPLEMENTATIONGUIDE.md)** - Integration guide for your game
+- **[threading-guidelines.md](docs/threading-guidelines.md)** - UE5 threading reference
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** - Contribution guidelines
 
 ## Example Content (coming soon)

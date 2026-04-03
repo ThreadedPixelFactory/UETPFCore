@@ -1,0 +1,68 @@
+# UETPFCore Project Skills
+
+## Critical Architecture Patterns
+
+### UniversalSkyActor: Manager Pattern (NOT Component Owner)
+- References separately-placed actors (SkyAtmosphere, DirectionalLight, SkyLight)
+- Never own atmospheric components (breaks UE5 rendering pipeline)
+- Updates via subsystem queries (SolarSystemSubsystem, EnvironmentSubsystem, TimeSubsystem)
+- Only owns Niagara starfield component (visual only)
+
+### Subsystem Access Pattern
+```cpp
+// DO: Per-use access
+UEnvironmentSubsystem* Env = GetWorld()->GetSubsystem<UEnvironmentSubsystem>();
+
+// DON'T: Cache as UPROPERTY (can invalidate)
+UPROPERTY() UEnvironmentSubsystem* CachedEnv;
+```
+
+### Coordinate Systems
+- **Canonical Frame**: km-scale (physics truth, double precision)
+- **UE World Frame**: cm-scale (rendering/gameplay)
+- **ALWAYS** use WorldFrameSubsystem for conversions (never manual `* 100000.0`)
+
+### Data-Driven Specs
+- **UMediumSpec**: Fluid/atmosphere properties (density, viscosity, temperature)
+- **USurfaceSpec**: Contact material properties (friction, compliance, hardness)
+- **Load once** in InitGame/BeginPlay, register with subsystems
+- **Never load in Tick**
+
+### Delta Persistence
+- Sparse cell-based storage (World Partition aligned)
+- Generate deltas **only on significant changes** (not per-frame)
+- Types: FSurfaceDelta, FFractureDelta, FTransformDelta
+
+## Module Structure
+```
+UETPFCore (Core) → GameLauncher, SinglePlayerStoryTemplate
+├── Subsystems/          # World subsystems (Time, Environment, Surface, Biome, Physics)
+├── Space/Subsystems/    # GameInstance subsystems (SolarSystem, WorldFrame, StarCatalog)
+├── Environment/         # UniversalSkyActor, SkyContext
+├── SpecTypes.h          # Data asset definitions
+└── DeltaTypes.h         # Persistence structs
+```
+
+## Build Commands
+```batch
+Scripts\build.bat           # Build Development Editor
+Scripts\editor.bat          # Launch editor
+Scripts\test.bat [filter]   # Run tests
+Scripts\clean.bat           # Clean build artifacts
+```
+
+## Key Files
+- ARCHITECTURE.md: Deep dive on subsystems, atmospheric rendering
+- IMPLEMENTATIONGUIDE.md: Integration patterns, setup workflows
+- CLAUDE.md: AI-facing architecture summary
+
+## Current Issues
+- UniversalSkyActor rendering setup needs clear editor workflow
+- Blueprint-based examples need subsystem validation patterns
+- Performance profiling tools needed (frame budgets, LOD)
+
+## Standards
+- Token-efficient documentation (remove verbose/redundant content)
+- Code in code files, docs reference by path (not inline)
+- Professional OSS quality: elegant, minimal cognitive load
+- Commit format: `type(scope): description` (conventional commits)

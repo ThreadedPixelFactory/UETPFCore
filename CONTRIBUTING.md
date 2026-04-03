@@ -386,7 +386,7 @@ All contributions must:
 
 - **GitHub Issues**: For bugs and features
 - **GitHub Discussions**: For questions and general discussion
-- **Documentation**: Check ARCHITECTURE.md and IMPLEMENTATIONGUIDE.md
+- **Documentation**: Check [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/IMPLEMENTATIONGUIDE.md](docs/IMPLEMENTATIONGUIDE.md)
 
 ## Recognition
 
