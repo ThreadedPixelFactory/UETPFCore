@@ -52,6 +52,14 @@ After changing module dependencies or Build.cs files:
 - Right-click `UETPFCore.uproject`
 - Select "Generate Visual Studio project files"
 
+### Clangd LSP (compile_commands.json)
+After cloning or modifying Build.cs files, regenerate the clang compilation database
+so clangd can navigate the full codebase including engine source:
+```batch
+Scripts\gen_clang_db.bat
+```
+See [docs/clangd-setup.md](docs/clangd-setup.md) for first-time PATH setup and VS Code configuration.
+
 ## Module Architecture
 
 ### Module Dependency Flow

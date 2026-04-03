@@ -1,0 +1,20 @@
+CompileFlags:
+  Add:
+    # Suppress warnings that clangd produces from UE's generated macros
+    # (GENERATED_BODY, UPROPERTY, UFUNCTION, UCLASS, etc.) which require
+    # Epic's patched toolchain to resolve cleanly.
+    - -Wno-unknown-pragmas
+    - -Wno-unused-command-line-argument
+    - -Wno-ignored-attributes
+    - -Wno-deprecated-declarations
+  Remove:
+    # /W4 is MSVC-specific; clangd rejects it
+    - /W4
+    - -W4
+
+Diagnostics:
+  # Suppress clang-tidy checks that are too noisy for UE code
+  ClangTidy:
+    Remove:
+      - modernize-use-trailing-return-type
+      - readability-identifier-naming
