@@ -6,6 +6,7 @@
 #include "PhysicalMaterials/PhysicalMaterial.h"
 #include "Engine/World.h"
 #include "CollisionQueryParams.h"
+#include "Log.h"
 
 // Static fallback spec - hardcoded realistic defaults that never fail
 FRuntimeSurfaceSpec USurfaceQuerySubsystem::FallbackSurfaceSpec = []()
@@ -37,7 +38,7 @@ void USurfaceQuerySubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	// Default trace channel for surface queries
 	SurfaceTraceChannel = ECC_Visibility;
 	
-	UE_LOG(LogTemp, Log, TEXT("SurfaceQuerySubsystem initialized for world: %s"), 
+	UE_LOG(LogUETPFCore, Log, TEXT("SurfaceQuerySubsystem initialized for world: %s"), 
 		*GetWorld()->GetName());
 }
 
@@ -120,6 +121,11 @@ FSurfaceState USurfaceQuerySubsystem::GetSurfaceStateAtLocation(const FVector& W
 
 TArray<FSurfaceState> USurfaceQuerySubsystem::BatchGetSurfaceStates(const TArray<FVector>& WorldLocations, float TraceDistance) const
 {
+	// TASK GRAPH NOTE: Each trace here is independent. For large batches (PCG, crowd AI),
+	// partition WorldLocations and dispatch via UE::Tasks::Launch, then merge results.
+	// UWorld::LineTraceSingleByChannel is thread-safe for read-only queries against static geometry.
+	// Dynamic objects require care — confirm thread safety before enabling async batching.
+
 	TArray<FSurfaceState> Results;
 	Results.Reserve(WorldLocations.Num());
 
@@ -141,7 +147,7 @@ void USurfaceQuerySubsystem::RegisterSurfaceSpec(UPhysicalMaterial* PhysMat, USu
 	{
 		SurfaceSpecMap.Add(PhysMat, Spec);
 		
-		UE_LOG(LogTemp, Verbose, TEXT("Registered SurfaceSpec '%s' for PhysicalMaterial '%s'"),
+		UE_LOG(LogUETPFCore, Verbose, TEXT("Registered SurfaceSpec '%s' for PhysicalMaterial '%s'"),
 			*Spec->SpecId.Id.ToString(), *PhysMat->GetName());
 	}
 }
@@ -168,7 +174,7 @@ void USurfaceQuerySubsystem::SetDefaultSurfaceSpec(USurfaceSpec* Spec)
 	
 	if (Spec)
 	{
-		UE_LOG(LogTemp, Log, TEXT("Default SurfaceSpec set to: %s"), *Spec->SpecId.Id.ToString());
+		UE_LOG(LogUETPFCore, Log, TEXT("Default SurfaceSpec set to: %s"), *Spec->SpecId.Id.ToString());
 	}
 }
 
@@ -305,7 +311,7 @@ void USurfaceQuerySubsystem::RegisterRuntimeSurfaceSpec(const FSurfaceSpecId& Id
 {
 	RuntimeSurfaceSpecs.Add(Id.Id, Spec);
 	
-	UE_LOG(LogTemp, Verbose, TEXT("Registered runtime SurfaceSpec: %s"), *Id.Id.ToString());
+	UE_LOG(LogUETPFCore, Verbose, TEXT("Registered runtime SurfaceSpec: %s"), *Id.Id.ToString());
 }
 
 bool USurfaceQuerySubsystem::ResolveSurfaceSpec(const FSurfaceSpecId& Id, FRuntimeSurfaceSpec& OutSpec) const
@@ -352,7 +358,7 @@ TArray<FSurfaceSpecId> USurfaceQuerySubsystem::GetAllRuntimeSpecIds() const
 void USurfaceQuerySubsystem::ClearRuntimeSpecs()
 {
 	RuntimeSurfaceSpecs.Empty();
-	UE_LOG(LogTemp, Log, TEXT("Cleared all runtime SurfaceSpecs"));
+	UE_LOG(LogUETPFCore, Log, TEXT("Cleared all runtime SurfaceSpecs"));
 }
 
 const FRuntimeSurfaceSpec& USurfaceQuerySubsystem::GetFallbackSpec()

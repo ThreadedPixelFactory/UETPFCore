@@ -192,6 +192,9 @@ private:
 	// Accumulator for fixed-step
 	double Accumulator = 0.0;
 
+	// Diagnostic logging counter (member variable, resets per GameInstance)
+	int32 AdvanceDiagnosticCount = 0;
+
 	// Guards
 	void ClampAndValidate();
 };

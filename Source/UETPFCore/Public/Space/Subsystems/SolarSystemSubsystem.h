@@ -244,12 +244,14 @@ public:
 	// ---------------- Time Anchoring ----------------
 	// If true: TimeSubsystem::SimTimeSeconds is interpreted as Unix seconds (UTC-ish).
 	// If false: SimTimeSeconds is seconds since "game epoch", anchored by GameEpochUnixSeconds.
+	// Default false so SimTime=0 starts at GameEpochUnixSeconds (daytime)
 	UPROPERTY(EditAnywhere, Category="Solar|Time")
-	bool bUseUnixEpochTime = true;
+	bool bUseUnixEpochTime = false;
 
 	// If bUseUnixEpochTime=false, this anchors "SimTimeSeconds=0" to a real UTC epoch.
+	// Default is noon UTC on summer solstice 2024 for good initial sun visibility
 	UPROPERTY(EditAnywhere, Category="Solar|Time")
-	double GameEpochUnixSeconds = 1704067200.0; // 2024-01-01 00:00:00 UTC
+	double GameEpochUnixSeconds = 1718971200.0; // 2024-06-21 12:00:00 UTC (noon, summer solstice)
 
 	UFUNCTION(BlueprintCallable, Category="Solar|Time")
 	void SetGameEpochUnixSeconds(double InUnixSeconds) { GameEpochUnixSeconds = InUnixSeconds; }
@@ -338,6 +340,9 @@ private:
 	mutable float CachedGMST = 0.0f;
 	mutable FVector3d CachedMoonPositionKm_D = FVector3d::Zero();
 	mutable FVector3d CachedMoonVelocityKmS_D = FVector3d::Zero();
+
+	// Startup diagnostic counter — member variable so it resets per GameInstance/PIE session.
+	mutable int32 DiagnosticCount = 0;
 
 	// Event subscription
 	FDelegateHandle TimeAdvancedHandle;

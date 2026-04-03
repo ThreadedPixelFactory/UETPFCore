@@ -178,7 +178,7 @@ FSolarSystemState USolarSystemSubsystem::GetSolarSystemState() const
 
 	FSolarSystemState State;
 	State.SunDir_World = FVector(CachedSunDir_D);  // For now, canonical == world; transform later if needed
-	State.SunIlluminanceLux = 100000.0f;  // Placeholder; compute based on distance/angle later
+	State.SunIlluminanceLux = 10000.0f;  // UE5-scaled value (not physical 100k lux - causes atmospheric overexposure)
 	State.MoonDir_World = FVector(CachedMoonPositionKm_D.GetSafeNormal());
 	State.MoonPhase01 = (float)GetMoonIlluminationFraction();
 	State.LocalSiderealTimeRad = CachedGMST;
@@ -219,11 +219,35 @@ void USolarSystemSubsystem::EnsureCacheUpToDate() const
 		return; // cache valid
 	}
 
+	// Startup diagnostics — member variable resets per GameInstance/PIE session.
+	//
+	// TASK GRAPH NOTE: EnsureCacheUpToDate is called from const getters (GetSunDirCanonical,
+	// GetSolarSystemState, etc.) on the game thread. If this subsystem is extended with a full
+	// ephemeris or many bodies, the compute work here is a good candidate for an async
+	// UE::Tasks::Launch dispatch triggered by OnTimeAdvanced, writing to a double-buffered
+	// cache that getters read from atomically. For now O(1) trig is cheap enough inline.
+	if (DiagnosticCount < 3)
+	{
+		const double DaysSince1970 = SimUnix / 86400.0;
+		const int32 Year = 1970 + static_cast<int32>(DaysSince1970 / 365.25);
+		const double HoursUTC = FMath::Fmod(SimUnix / 3600.0, 24.0);
+		UE_LOG(LogUETPFCore, Log, TEXT("SolarSystemSubsystem: SimUnix=%.2f (~%d, %.2f UTC), bUseUnixEpoch=%d"),
+			SimUnix, Year, HoursUTC, bUseUnixEpochTime);
+		DiagnosticCount++;
+	}
+
 	CachedSimUnixSeconds = SimUnix;
 	CachedJulianDate = UnixSecondsToJulianDate(SimUnix);
 
 	CachedSunDir_D = ComputeSunDirApprox_J2000(CachedJulianDate);
 	CachedGMST = ComputeGMSTAngleRad_FromJD(CachedJulianDate);
+
+	if (DiagnosticCount <= 3)
+	{
+		const double SunElevationDeg = FMath::Asin(CachedSunDir_D.Z) * (180.0 / PI);
+		UE_LOG(LogUETPFCore, Log, TEXT("SolarSystemSubsystem: SunDir=(%.3f, %.3f, %.3f), Declination=%.1f deg"),
+			CachedSunDir_D.X, CachedSunDir_D.Y, CachedSunDir_D.Z, SunElevationDeg);
+	}
 
 	ComputeMoonState(SimUnix);
 }

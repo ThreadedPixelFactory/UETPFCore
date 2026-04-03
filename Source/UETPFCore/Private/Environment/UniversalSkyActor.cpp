@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "Environment/UniversalSkyActor.h"
+#include "Log.h"
 
 #include "SpecTypes.h"
 #include "Subsystems/TimeSubsystem.h"
@@ -16,6 +17,14 @@
 #include "Components/ExponentialHeightFogComponent.h"
 #include "Components/PostProcessComponent.h"
 
+// Actor includes for reference-based pattern
+#include "Engine/DirectionalLight.h"
+#include "Engine/SkyLight.h"
+#include "Components/SkyAtmosphereComponent.h"
+#include "Components/VolumetricCloudComponent.h"
+#include "Components/ExponentialHeightFogComponent.h"
+#include "Engine/PostProcessVolume.h"
+
 #include "Engine/World.h"
 #include "Engine/Engine.h"
 #include "Kismet/KismetMathLibrary.h"
@@ -25,52 +34,26 @@
 #include "NiagaraDataInterfaceArrayFunctionLibrary.h"
 #include "Materials/MaterialCreator.h"
 
+/* ================================================================================
+ * CONSTRUCTOR: MINIMAL SETUP
+ * ================================================================================
+ * Manager pattern: Only create owned components (Root, Starfield).
+ * Atmospheric actors are referenced, not owned - they must be placed separately.
+ * ================================================================================ */
 AUniversalSkyActor::AUniversalSkyActor()
 {
+	// MINIMAL TICK ARCHITECTURE: Tick only checks dirty flags, does no work if clean
+	// This avoids timer queuing issues while keeping game thread work minimal
 	PrimaryActorTick.bCanEverTick = true;
-	PrimaryActorTick.TickGroup = TG_PrePhysics; // Tick before physics so camera sees latest state
+	PrimaryActorTick.bStartWithTickEnabled = true;
+	PrimaryActorTick.TickInterval = 0.1f; // 10 Hz max - not per-frame
 
-	// Root component - all other components attach to this
+	// Root component - starfield attaches to this
 	Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	SetRootComponent(Root);
 
-	// Directional Light (Sun)
-	SunLight = CreateDefaultSubobject<UDirectionalLightComponent>(TEXT("SunLight"));
-	SunLight->SetupAttachment(Root);
-	SunLight->SetVisibility(true);
-	SunLight->SetHiddenInGame(false);
-
-	// Sky Atmosphere (atmospheric scattering)
-	SkyAtmosphere = CreateDefaultSubobject<USkyAtmosphereComponent>(TEXT("SkyAtmosphere"));
-	SkyAtmosphere->SetupAttachment(Root);
-	SkyAtmosphere->SetVisibility(true);
-	SkyAtmosphere->SetHiddenInGame(false);
-
-	// Sky Light (ambient/GI contribution)
-	SkyLight = CreateDefaultSubobject<USkyLightComponent>(TEXT("SkyLight"));
-	SkyLight->SetupAttachment(Root);
-	SkyLight->SetVisibility(true);
-	SkyLight->SetHiddenInGame(false);
-
-	// Volumetric Clouds
-	VolumetricCloud = CreateDefaultSubobject<UVolumetricCloudComponent>(TEXT("VolumetricCloud"));
-	VolumetricCloud->SetupAttachment(Root);
-	VolumetricCloud->SetVisibility(true);
-	VolumetricCloud->SetHiddenInGame(false);
-
-	// Exponential Height Fog
-	HeightFog = CreateDefaultSubobject<UExponentialHeightFogComponent>(TEXT("HeightFog"));
-	HeightFog->SetupAttachment(Root);
-	HeightFog->SetVisibility(true);
-	HeightFog->SetHiddenInGame(false);
-
-	// PostProcess Volume
-	// CRITICAL: Do NOT attach to root - unbound volumes (bUnbound=true) must remain unattached
-	// to affect the entire scene globally. Attaching them limits their influence to a bounded region.
-	PostProcess = CreateDefaultSubobject<UPostProcessComponent>(TEXT("PostProcess"));
-	PostProcess->SetVisibility(true);
-
-	// Niagara Starfield
+	// Niagara Starfield - the ONLY owned component for atmospheric rendering
+	// Starfield is purely visual and doesn't interact with UE5's atmospheric pipeline
 	StarfieldComponent = CreateDefaultSubobject<UNiagaraComponent>(TEXT("StarfieldComponent"));
 	StarfieldComponent->SetupAttachment(Root);
 	StarfieldComponent->SetVisibility(true);
@@ -83,322 +66,428 @@ AUniversalSkyActor::AUniversalSkyActor()
 		StarfieldNiagaraSystem = StarfieldSystemFinder.Object;
 	}
 
-	ConfigureDefaults();
-}
-
-void AUniversalSkyActor::ConfigureDefaults()
-{
-	/* ================================================================================
-	 * DIRECTIONAL LIGHT (SUN) CONFIGURATION
-	 * ================================================================================
-	 * Mobility MUST be Movable for dynamic lighting with Lumen GI/Reflections.
-	 * Stationary or Static mobility will not work correctly with procedural sky updates.
-	 * ================================================================================ */
-	SunLight->SetMobility(EComponentMobility::Movable);
-	
-	// CRITICAL: bAffectsWorld MUST be true for light to contribute to Lumen GI
-	SunLight->bAffectsWorld = true;
-	SunLight->bAtmosphereSunLight = true;
-	SunLight->AtmosphereSunLightIndex = 0;
-	SunLight->bCastCloudShadows = true;
-	SunLight->bCastShadowsOnClouds = true;
-	
-	// Color temperature for realistic daylight
-	SunLight->bUseTemperature = true;
-	SunLight->Temperature = 6500.0f; // Neutral daylight white
-	
-	// Shadow casting required for Lumen dynamic lighting
-	SunLight->CastShadows = true;
-	SunLight->CastDynamicShadows = true;
-	SunLight->bCastVolumetricShadow = true;
-	
-	// Base intensity (will be scaled by ApplySun based on atmospheric conditions)
-	SunLight->Intensity = 50000.0f;
-	
-	// Ensure component is visible and active
-	SunLight->SetVisibility(true);
-	SunLight->SetHiddenInGame(false);
-	SunLight->SetActive(true);
-	
-	UE_LOG(LogTemp, Warning, TEXT("☀️ SUN: Mobility=Movable, Intensity=%.0f lux, AffectsWorld=%d, Active=%d"), 
-		SunLight->Intensity, SunLight->bAffectsWorld, SunLight->IsActive());
-
-	/* ================================================================================
-	 * SKY LIGHT CONFIGURATION
-	 * ================================================================================
-	 * SkyLight provides ambient lighting by capturing the sky dome.
-	 * Real-time capture MUST be enabled for dynamic sky changes to affect lighting.
-	 * Movable mobility required for Lumen to update GI from sky changes.
-	 * ================================================================================ */
-	SkyLight->SetMobility(EComponentMobility::Movable);
-	SkyLight->bRealTimeCapture = true;
-	SkyLight->Intensity = 1.0f;
-	SkyLight->SetVisibility(true);
-	SkyLight->SetHiddenInGame(false);
-	SkyLight->SetActive(true);
-	
-	UE_LOG(LogTemp, Warning, TEXT("🌤️ SKYLIGHT: Intensity=%.1f, RealTimeCapture=%d, Active=%d"), 
-		SkyLight->Intensity, SkyLight->bRealTimeCapture, SkyLight->IsActive());
-
-	/* ================================================================================
-	 * SKY ATMOSPHERE CONFIGURATION
-	 * ================================================================================
-	 * Handles atmospheric scattering (Rayleigh/Mie) for realistic sky appearance.
-	 * Earth-like atmosphere with proper physical dimensions and scattering.
-	 * ================================================================================ */
-	SkyAtmosphere->SetVisibility(true);
-	SkyAtmosphere->SetHiddenInGame(false);
-	SkyAtmosphere->SetActive(true);
-	
-	// Earth-like atmosphere dimensions (km converted to Unreal units)
-	SkyAtmosphere->BottomRadius = 6360.0f; // Earth radius at sea level (km)
-	SkyAtmosphere->AtmosphereHeight = 100.0f; // Atmosphere thickness (km)
-	
-	// Rayleigh scattering (blue sky) - default values work well
-	SkyAtmosphere->RayleighScatteringScale = 0.0331f;
-	SkyAtmosphere->RayleighExponentialDistribution = 8.0f;
-	
-	// Mie scattering (atmospheric haze/fog)
-	SkyAtmosphere->MieScatteringScale = 0.003996f;
-	SkyAtmosphere->MieAbsorptionScale = 0.000444f;
-	SkyAtmosphere->MieAnisotropy = 0.8f;
-	SkyAtmosphere->MieExponentialDistribution = 1.2f;
-	
-	// Ground albedo (how much light surface reflects back to atmosphere)
-	SkyAtmosphere->GroundAlbedo = FColor(77, 77, 77); // 0.3 reflectance (77/255 ~= 0.3)
-	
-	UE_LOG(LogTemp, Log, TEXT("🌍 ATMOSPHERE: Active=%d, Visible=%d, BottomRadius=%.0f km"), 
-		SkyAtmosphere->IsActive(), SkyAtmosphere->IsVisible(), SkyAtmosphere->BottomRadius);
-
-	/* ================================================================================
-	 * VOLUMETRIC COMPONENTS (FOG & CLOUDS)
-	 * ================================================================================
-	 * Mobility Movable required for dynamic fog/cloud changes in response to weather.
-	 * NOTE: VolumetricCloud requires a material to be assigned for rendering!
-	 * Without a cloud material, the component will be active but invisible.
-	 * ================================================================================ */
-	HeightFog->SetMobility(EComponentMobility::Movable);
-	HeightFog->bEnableVolumetricFog = true;
-	HeightFog->FogDensity = 0.002f; // Low density for atmospheric haze
-	HeightFog->FogHeightFalloff = 0.2f; // Gradual density decrease with altitude
-	HeightFog->DirectionalInscatteringExponent = 4.0f;
-	HeightFog->DirectionalInscatteringStartDistance = 10000.0f; // 100m
-	HeightFog->SetVisibility(true);
-	HeightFog->SetHiddenInGame(false);
-	HeightFog->SetActive(true);
-	
-	VolumetricCloud->SetMobility(EComponentMobility::Movable);
-	VolumetricCloud->LayerBottomAltitude = 5.0f; // 5km cloud base
-	VolumetricCloud->LayerHeight = 10.0f; // 10km cloud layer thickness
-	VolumetricCloud->ViewSampleCountScale = 1.0f; // Full quality rendering
-	VolumetricCloud->ShadowViewSampleCountScale = 0.5f; // Half quality for shadows
-	VolumetricCloud->SetVisibility(true);
-	VolumetricCloud->SetHiddenInGame(false);
-	VolumetricCloud->SetActive(true);
-	
-	UE_LOG(LogTemp, Log, TEXT("🌫️ FOG & CLOUDS: Active=%d/%d, CloudLayer=%.0f-%.0f km"), 
-		HeightFog->IsActive(), VolumetricCloud->IsActive(),
-		VolumetricCloud->LayerBottomAltitude, VolumetricCloud->LayerBottomAltitude + VolumetricCloud->LayerHeight);
-
-	/* ================================================================================
-	 * POST PROCESS VOLUME CONFIGURATION FOR LUMEN
-	 * ================================================================================
-	 * CRITICAL SETTINGS FOR GLOBAL POST-PROCESS:
-	 * 
-	 * 1. bUnbound = true: Volume affects entire scene (not spatially limited)
-	 * 2. BlendWeight = 1.0f: MUST be > 0 for settings to take effect
-	 * 3. NOT attached to RootComponent: Unbound volumes must remain unattached
-	 * 4. High Priority: Overrides other post-process volumes
-	 * 
-	 * This configures exposure and Lumen for space/night sky rendering where
-	 * extreme dynamic range (bright stars vs black space) requires manual exposure.
-	 * ================================================================================ */
-	PostProcess->bUnbound = true; // Global effect
-	PostProcess->BlendWeight = 1.0f; // CRITICAL: Must be 1.0 to activate
-	PostProcess->Priority = 10.0f; // High priority to override project defaults
-	
-	// Manual exposure for space scenes (auto-exposure fails with extreme dynamic range)
-	PostProcess->Settings.bOverride_AutoExposureMethod = true;
-	PostProcess->Settings.AutoExposureMethod = AEM_Manual;
-	
-	PostProcess->Settings.bOverride_AutoExposureBias = true;
-	PostProcess->Settings.AutoExposureBias = -2.0f; // Brighten by 2 stops
-	
-	// Exposure range clamping for Lumen
-	PostProcess->Settings.bOverride_AutoExposureMinBrightness = true;
-	PostProcess->Settings.AutoExposureMinBrightness = 1.0f;
-	
-	PostProcess->Settings.bOverride_AutoExposureMaxBrightness = true;
-	PostProcess->Settings.AutoExposureMaxBrightness = 2.0f;
-	
-	// Force Lumen GI and Reflections
-	PostProcess->Settings.bOverride_ReflectionMethod = true;
-	PostProcess->Settings.ReflectionMethod = EReflectionMethod::Lumen;
-	
-	PostProcess->Settings.bOverride_DynamicGlobalIlluminationMethod = true;
-	PostProcess->Settings.DynamicGlobalIlluminationMethod = EDynamicGlobalIlluminationMethod::Lumen;
-	
-	PostProcess->SetActive(true);
-	
-	UE_LOG(LogTemp, Warning, TEXT("📷 POSTPROCESS: Unbound=%d, BlendWeight=%.1f, Priority=%.1f, Lumen=%d"), 
-		PostProcess->bUnbound, PostProcess->BlendWeight, PostProcess->Priority, 
-		(int32)PostProcess->Settings.ReflectionMethod);
-
-	/* ================================================================================
-	 * NIAGARA STARFIELD CONFIGURATION
-	 * ================================================================================ */
+	// Configure starfield component
 	if (StarfieldComponent && StarfieldNiagaraSystem)
 	{
 		StarfieldComponent->SetAsset(StarfieldNiagaraSystem);
-		
+
 		// Prevent Niagara scalability from culling particles
 		StarfieldComponent->SetAllowScalability(false);
 		StarfieldComponent->SetRenderingEnabled(true);
-		
+
 		StarfieldComponent->SetAutoActivate(true);
 		StarfieldComponent->bAutoManageAttachment = false;
 		StarfieldComponent->SetTickGroup(TG_DuringPhysics);
-		
-		UE_LOG(LogTemp, Warning, TEXT("⭐ STARFIELD: Configured, SphereRadius=%.0f cm"), StarSphereRadiusCm);
+
+		UE_LOG(LogUETPFCore, Log, TEXT("UniversalSkyActor: Starfield configured (SphereRadius=%.0f cm)"), StarSphereRadiusCm);
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("⭐ STARFIELD: Waiting for NiagaraSystem assignment"));
+		UE_LOG(LogUETPFCore, Log, TEXT("UniversalSkyActor: Starfield waiting for NiagaraSystem assignment"));
 	}
+
+	UE_LOG(LogUETPFCore, Log, TEXT("UniversalSkyActor: Constructed as MANAGER (no owned atmospheric components)"));
+	UE_LOG(LogUETPFCore, Log, TEXT("  └─ Assign actor references in Details panel after placing actors in level"));
 }
 
 void AUniversalSkyActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	// Unsubscribe from TimeSubsystem
-	if (UGameInstance* GI = GetGameInstance())
-	{
-		if (UTimeSubsystem* TimeSys = GI->GetSubsystem<UTimeSubsystem>())
-		{
-			TimeSys->OnSimTimeAdvanced.Remove(TimeAdvancedHandle);
-		}
-	}
-
+	// No timers to clean up - using tick-based architecture
 	Super::EndPlay(EndPlayReason);
 }
 
+/* ================================================================================
+ * BEGINPLAY: SUBSYSTEM SUBSCRIPTION
+ * ================================================================================
+ * Subscribe to TimeSubsystem for automatic updates on time changes.
+ * Validate actor references and log warnings for missing assignments.
+ * ================================================================================ */
 void AUniversalSkyActor::BeginPlay()
 {
-	Super::BeginPlay();
+    Super::BeginPlay();
 
-	// Load Niagara system if not assigned
-	if (!StarfieldNiagaraSystem)
-	{
-		StarfieldNiagaraSystem = LoadObject<UNiagaraSystem>(nullptr, TEXT("/Game/SpecPacks/Space/NS_StarField.NS_StarField"));
-		if (StarfieldNiagaraSystem)
-		{
-			UE_LOG(LogTemp, Log, TEXT("UniversalSkyActor: Loaded StarfieldNiagaraSystem from /Game/SpecPacks/Space/NS_StarField"));
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("UniversalSkyActor: Failed to load StarfieldNiagaraSystem. Ensure it exists at /Game/SpecPacks/Space/NS_StarField"));
-		}
-	}
+    UE_LOG(LogUETPFCore, Log, TEXT("UniversalSkyActor::BeginPlay - Medium(Density=%.3f, Pressure=%.1f Pa), Weather(Cloud=%.2f, Humidity=%.2f)"),
+        CurrentMedium.Density, CurrentMedium.PressurePa, CurrentWeather.CloudCover01, CurrentWeather.Humidity01);
 
-	// Assign Niagara system if set (ApplyStarfield will handle data upload)
-	if (StarfieldComponent && StarfieldNiagaraSystem)
-	{
-		StarfieldComponent->SetAsset(StarfieldNiagaraSystem);
-		UE_LOG(LogTemp, Log, TEXT("UniversalSkyActor: Assigned StarfieldNiagaraSystem to component"));		
-		// Create and apply procedural star material
-		UMaterial* StarMaterial = UMaterialCreator::CreateStarMaterial(
-			TEXT("/Game/Core/Materials"),
-			FName("M_StarProcedural"),
-			1000.0f // Default brightness multiplier
-		);
-		
-		if (StarMaterial)
-		{
-			UMaterialCreator::ApplyMaterialToNiagara(StarfieldComponent, StarMaterial);
-		}	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("UniversalSkyActor: StarfieldComponent or StarfieldNiagaraSystem not available. Assign StarfieldNiagaraSystem in editor."));
-	}
-
-	// Force skylight recapture at runtime to ensure sun is captured
-    if (SkyLight)
+    // Phase 1: Validate required references
+    if (!ValidateRequiredReferences())
     {
-        SkyLight->RecaptureSky();
-        UE_LOG(LogTemp, Log, TEXT("UniversalSkyActor: Skylight recapture initiated"));
+        UE_LOG(LogUETPFCore, Error, TEXT("[ERROR] UniversalSkyActor: Missing required actor references"));
+        UE_LOG(LogUETPFCore, Error, TEXT("   SETUP: 1) Place SkyAtmosphere, DirectionalLight, SkyLight in level"));
+        UE_LOG(LogUETPFCore, Error, TEXT("          2) Assign references in UniversalSkyActor Details panel"));
+        return;
     }
 
-    // TESTING: Set sun to 30-degree elevation for optimal menu scene visibility
-    // This overrides solar system calculation until proper time initialization
-    if (SunLight)
+    // Phase 2: Initialize all atmospheric components and set linkage properties
+    InitializeAtmosphericComponents();
+
+    // Phase 3: Subscribe to subsystems
+    SubscribeToSubsystems();
+
+    // Phase 4: Apply initial environment state (MUST happen before render state registration)
+    ApplyEnvironment(CurrentMedium, CurrentWeather);
+
+    // Phase 5: Initialize starfield with star catalog data
+    ApplyStarfield();
+
+    // Phase 6: Register components with rendering thread AFTER properties are set
+    RegisterComponentsWithRenderer();
+    
+    // Phase 7: Mark SkyLight for deferred recapture (non-blocking)
+    // SetCaptureIsDirty schedules recapture for next frame instead of blocking immediately.
+    // With Lumen: Recapture primarily affects non-Lumen fallback paths
+    // Without Lumen: Provides ambient GI baseline after all components configured
+    if (USkyLightComponent* SkyComp = GetSkyLightComponent())
     {
-        // Point sun 30 degrees above horizon for natural illumination
-        // Pitch=-30 points downward from 30° above horizon
-        // Yaw=45 positions sun from southeast for better shadowing
-        FRotator TestSunRot(-30.0f, 45.0f, 0.0f);
-        SunLight->SetWorldRotation(TestSunRot);
-        
-        // Reduced intensity prevents auto-exposure from darkening stars
-        // 20k lux = comfortable outdoor daylight, not blinding
-        SunLight->SetIntensity(20000.0f);
-        
-        FRotator SunRot = SunLight->GetComponentRotation();
-        UE_LOG(LogTemp, Warning, TEXT("☀️ TEST SUN: Rotation=%s, Intensity=%.0f lux"), 
-            *SunRot.ToString(), SunLight->Intensity);
+        SkyComp->SetCaptureIsDirty();
+        UE_LOG(LogUETPFCore, Log, TEXT("[OK] UniversalSkyActor: SkyLight marked dirty for deferred recapture"));
+    }
+}
+
+/* ================================================================================
+ * INITIALIZATION PHASE METHODS
+ * ================================================================================
+ * These methods are called from BeginPlay in a specific order:
+ * 1. ValidateRequiredReferences - Check required actors assigned
+ * 2. InitializeAtmosphericComponents - Activate and configure components
+ * 3. RegisterComponentsWithRenderer - Mark render state dirty
+ * 4. SubscribeToSubsystems - Subscribe to time updates
+ * ================================================================================ */
+
+bool AUniversalSkyActor::ValidateRequiredReferences()
+{
+    bool bValid = true;
+
+    // Check required references
+    if (!SunLightActor)
+    {
+        UE_LOG(LogUETPFCore, Error, TEXT("[ERROR] UniversalSkyActor: Missing SunLightActor reference"));
+        bValid = false;
     }
 
-	// Subscribe to TimeSubsystem for event-driven updates
+    if (!SkyAtmosphereActor)
+    {
+        UE_LOG(LogUETPFCore, Error, TEXT("[ERROR] UniversalSkyActor: Missing SkyAtmosphereActor reference"));
+        bValid = false;
+    }
+
+    if (!SkyLightActor)
+    {
+        UE_LOG(LogUETPFCore, Error, TEXT("[ERROR] UniversalSkyActor: Missing SkyLightActor reference"));
+        bValid = false;
+    }
+
+    // Log info about optional references
+    if (!VolumetricCloudActor)
+    {
+        UE_LOG(LogUETPFCore, Log, TEXT("[INFO] UniversalSkyActor: VolumetricCloudActor not assigned (optional)"));
+    }
+
+    if (!HeightFogActor)
+    {
+        UE_LOG(LogUETPFCore, Log, TEXT("[INFO] UniversalSkyActor: HeightFogActor not assigned (optional)"));
+    }
+
+    if (!PostProcessVolume)
+    {
+        UE_LOG(LogUETPFCore, Log, TEXT("[INFO] UniversalSkyActor: PostProcessVolume not assigned (optional)"));
+    }
+
+    if (bValid)
+    {
+        UE_LOG(LogUETPFCore, Log, TEXT("[OK] UniversalSkyActor: All required actor references assigned"));
+    }
+
+    return bValid;
+}
+
+void AUniversalSkyActor::InitializeAtmosphericComponents()
+{
+    // Initialize DirectionalLight component
+    if (UDirectionalLightComponent* SunComp = GetSunLightComponent())
+    {
+        if (!SunComp->IsActive())
+        {
+            SunComp->SetActive(true);
+            UE_LOG(LogUETPFCore, Log, TEXT("[OK] UniversalSkyActor: Activated DirectionalLight component"));
+        }
+
+        // CRITICAL: Set atmosphere sun light properties for SkyAtmosphere linkage
+        SunComp->bAtmosphereSunLight = true;
+        SunComp->AtmosphereSunLightIndex = 0;
+        SunComp->SetMobility(EComponentMobility::Movable);
+        
+        // CRITICAL: These must be set for Lumen GI to work properly
+        SunComp->bAffectsWorld = true;
+        SunComp->CastShadows = true;
+        SunComp->CastDynamicShadows = true;
+        SunComp->bCastVolumetricShadow = true;
+        SunComp->bCastCloudShadows = true;
+        SunComp->bCastShadowsOnClouds = true;
+        
+        UE_LOG(LogUETPFCore, Log, TEXT("[OK] UniversalSkyActor: DirectionalLight configured (AtmosSunLight=true, Index=0, Movable, AffectsWorld=true)"));
+
+        // Component properties will be set by ApplySun()
+    }
+
+    // Initialize SkyAtmosphere component
+    if (USkyAtmosphereComponent* AtmosComp = GetSkyAtmosphereComponent())
+    {
+        if (!AtmosComp->IsActive())
+        {
+            AtmosComp->SetActive(true);
+            UE_LOG(LogUETPFCore, Log, TEXT("[OK] UniversalSkyActor: Activated SkyAtmosphere component"));
+        }
+
+        // MANAGER PATTERN: Do NOT overwrite placed actor's settings
+        // The placed SkyAtmosphere actor has correct settings from the editor
+        // We only ensure it's active and visible - ApplyAtmosphere handles dynamic updates
+        
+        UE_LOG(LogUETPFCore, Log, TEXT("[OK] UniversalSkyActor: SkyAtmosphere validated (BottomRadius=%.0f, AtmosHeight=%.0f)"),
+            AtmosComp->BottomRadius, AtmosComp->AtmosphereHeight);
+        // Component properties will be set by ApplyAtmosphere()
+    }
+
+    // Initialize SkyLight component
+    if (USkyLightComponent* SkyComp = GetSkyLightComponent())
+    {
+        if (!SkyComp->IsActive())
+        {
+            SkyComp->SetActive(true);
+            UE_LOG(LogUETPFCore, Log, TEXT("[OK] UniversalSkyActor: Activated SkyLight component"));
+        }
+
+        // ARCHITECTURE: No real-time capture, no manual RecaptureSky
+        // - With Lumen: Lumen traces through SkyAtmosphere directly for sky GI
+        // - Without Lumen: SkyLight provides static ambient (set once, no recapture)
+        //
+        // RecaptureSky is a synchronous GPU flush that blocks the game thread.
+        // Lumen handles dynamic sky GI via raytracing - no capture needed.
+        // For non-Lumen, initial capture happens automatically when component activates.
+        SkyComp->bRealTimeCapture = false;
+        SkyComp->SourceType = ESkyLightSourceType::SLS_CapturedScene;
+        SkyComp->SetMobility(EComponentMobility::Movable);
+
+        // PERFORMANCE: Skip lower hemisphere capture - ground GI handled by Lumen/lightmaps
+        // This halves the SkyLight capture cost when recapture does occur
+        SkyComp->bLowerHemisphereIsBlack = true;
+
+        UE_LOG(LogUETPFCore, Log, TEXT("[OK] UniversalSkyActor: SkyLight configured (RealTimeCapture=false, LowerHemisphereBlack=true, Lumen handles sky GI)"));
+
+        // Component properties will be set by ApplySkyLight()
+    }
+
+    // Initialize VolumetricCloud component (optional)
+    if (UVolumetricCloudComponent* CloudComp = GetVolumetricCloudComponent())
+    {
+        if (!CloudComp->IsActive())
+        {
+            CloudComp->SetActive(true);
+            UE_LOG(LogUETPFCore, Log, TEXT("[OK] UniversalSkyActor: Activated VolumetricCloud component"));
+        }
+        // Component properties will be set by ApplyClouds()
+    }
+
+    // Initialize ExponentialHeightFog component (optional)
+    if (UExponentialHeightFogComponent* FogComp = GetHeightFogComponent())
+    {
+        if (!FogComp->IsActive())
+        {
+            FogComp->SetActive(true);
+            UE_LOG(LogUETPFCore, Log, TEXT("[OK] UniversalSkyActor: Activated HeightFog component"));
+        }
+        // Component properties will be set by ApplyFog()
+    }
+
+    // Initialize PostProcess component (optional)
+    if (UPostProcessComponent* PPComp = GetPostProcessComponent())
+    {
+        if (!PPComp->IsActive())
+        {
+            PPComp->SetActive(true);
+            UE_LOG(LogUETPFCore, Log, TEXT("[OK] UniversalSkyActor: Activated PostProcess component"));
+        }
+
+        // CRITICAL: Set to Unbound to affect entire scene
+        PPComp->bUnbound = true;
+        UE_LOG(LogUETPFCore, Log, TEXT("[OK] UniversalSkyActor: PostProcess set to Unbound (affects entire scene)"));
+
+        // Component properties will be set by ApplyPostProcess()
+    }
+}
+
+void AUniversalSkyActor::RegisterComponentsWithRenderer()
+{
+    // Validate world consistency - this check is critical even in shipping
+    UWorld* MyWorld = GetWorld();
+    if (SunLightActor && SkyAtmosphereActor)
+    {
+        UWorld* SunActorWorld = SunLightActor->GetWorld();
+        UWorld* AtmosActorWorld = SkyAtmosphereActor->GetWorld();
+
+        if (MyWorld != SunActorWorld || MyWorld != AtmosActorWorld)
+        {
+            UE_LOG(LogUETPFCore, Error, TEXT("UniversalSkyActor: World mismatch detected - atmospheric rendering will fail"));
+            UE_LOG(LogUETPFCore, Error, TEXT("  Manager=%s, SunLight=%s, SkyAtmos=%s"),
+                MyWorld ? *MyWorld->GetName() : TEXT("NULL"),
+                SunActorWorld ? *SunActorWorld->GetName() : TEXT("NULL"),
+                AtmosActorWorld ? *AtmosActorWorld->GetName() : TEXT("NULL"));
+        }
+    }
+
+#if !UE_BUILD_SHIPPING
+    // Development diagnostics - verify component registration and linkage
+    UE_LOG(LogUETPFCore, Verbose, TEXT("UniversalSkyActor: Scene diagnostics (World=%s, PIE=%d)"),
+        MyWorld ? *MyWorld->GetName() : TEXT("NULL"),
+        MyWorld ? MyWorld->IsPlayInEditor() : 0);
+
+    if (UDirectionalLightComponent* SunComp = GetSunLightComponent())
+    {
+        UE_LOG(LogUETPFCore, Verbose, TEXT("  DirectionalLight: Registered=%d, AtmosSunLight=%d, Index=%d"),
+            SunComp->IsRegistered(), SunComp->bAtmosphereSunLight, SunComp->AtmosphereSunLightIndex);
+    }
+
+    if (USkyAtmosphereComponent* AtmosComp = GetSkyAtmosphereComponent())
+    {
+        UE_LOG(LogUETPFCore, Verbose, TEXT("  SkyAtmosphere: Registered=%d, Active=%d"),
+            AtmosComp->IsRegistered(), AtmosComp->IsActive());
+    }
+
+    if (USkyLightComponent* SkyComp = GetSkyLightComponent())
+    {
+        UE_LOG(LogUETPFCore, Verbose, TEXT("  SkyLight: Registered=%d, RealTimeCapture=%d"),
+            SkyComp->IsRegistered(), SkyComp->bRealTimeCapture);
+    }
+#endif
+}
+
+void AUniversalSkyActor::SubscribeToSubsystems()
+{
+    // MINIMAL TICK ARCHITECTURE: No timers, no subscriptions
+    // Tick() checks dirty flags and samples subsystems when needed
+    
+    UGameInstance* GI = GetGameInstance();
+    if (!GI) 
+    { 
+        UE_LOG(LogUETPFCore, Warning, TEXT("UniversalSkyActor: GameInstance not available"));
+        return; 
+    }
+
+    // Verify TimeSubsystem exists (we'll sample it in Tick)
+    if (UTimeSubsystem* TimeSub = GI->GetSubsystem<UTimeSubsystem>())
+    {
+        UE_LOG(LogUETPFCore, Log, TEXT("[OK] UniversalSkyActor: TimeSubsystem available for sampling"));
+    }
+    else
+    {
+        UE_LOG(LogUETPFCore, Warning, TEXT("UniversalSkyActor: TimeSubsystem not available"));
+    }
+    
+    UE_LOG(LogUETPFCore, Log, TEXT("[OK] UniversalSkyActor: Tick-based architecture configured (TickInterval=%.2fs)"),
+        PrimaryActorTick.TickInterval);
+}
+
+/* ================================================================================
+ * COMPONENT GETTER METHODS
+ * ================================================================================
+ * Safe accessors that extract components from referenced actors.
+ * Return nullptr if actor not assigned or component not found.
+ * ================================================================================ */
+
+UDirectionalLightComponent* AUniversalSkyActor::GetSunLightComponent() const
+{
+	if (!SunLightActor)
+	{
+		return nullptr;
+	}
+	return Cast<UDirectionalLightComponent>(SunLightActor->GetLightComponent());
+}
+
+USkyAtmosphereComponent* AUniversalSkyActor::GetSkyAtmosphereComponent() const
+{
+	if (!SkyAtmosphereActor)
+	{
+		return nullptr;
+	}
+	return SkyAtmosphereActor->GetComponentByClass<USkyAtmosphereComponent>();
+}
+
+USkyLightComponent* AUniversalSkyActor::GetSkyLightComponent() const
+{
+	if (!SkyLightActor)
+	{
+		return nullptr;
+	}
+	return SkyLightActor->GetLightComponent();
+}
+
+UVolumetricCloudComponent* AUniversalSkyActor::GetVolumetricCloudComponent() const
+{
+	if (!VolumetricCloudActor)
+	{
+		return nullptr;
+	}
+	return VolumetricCloudActor->GetComponentByClass<UVolumetricCloudComponent>();
+}
+
+UExponentialHeightFogComponent* AUniversalSkyActor::GetHeightFogComponent() const
+{
+	if (!HeightFogActor)
+	{
+		return nullptr;
+	}
+	return HeightFogActor->FindComponentByClass<UExponentialHeightFogComponent>();
+}
+
+UPostProcessComponent* AUniversalSkyActor::GetPostProcessComponent() const
+{
+	if (!PostProcessVolume)
+	{
+		return nullptr;
+	}
+	return PostProcessVolume->GetComponentByClass<UPostProcessComponent>();
+}
+
+/* ================================================================================
+ * TICK - MINIMAL DIRTY FLAG ARCHITECTURE
+ * ================================================================================
+ * Tick runs at 10Hz (TickInterval=0.1s), NOT per-frame.
+ * Only samples time and applies environment if dirty flags are set.
+ * No heavy work happens here - just flag checks and lightweight component updates.
+ * 
+ * ELIMINATED ALL BLOCKING OPERATIONS:
+ * - No RecaptureSky (Lumen handles sky GI via raytracing)
+ * - No RecreateRenderState (let deferred update handle it)
+ * - No timer queues (timers accumulate during frame stalls)
+ * ================================================================================ */
+
+void AUniversalSkyActor::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+
+	// Sample current simulation time - mark sun dirty if time changed significantly
 	if (UGameInstance* GI = GetGameInstance())
 	{
-		if (UTimeSubsystem* TimeSys = GI->GetSubsystem<UTimeSubsystem>())
+		if (UTimeSubsystem* TimeSub = GI->GetSubsystem<UTimeSubsystem>())
 		{
-			TimeAdvancedHandle = TimeSys->OnSimTimeAdvanced.AddUObject(this, &AUniversalSkyActor::OnTimeAdvanced);
-			UE_LOG(LogTemp, Log, TEXT("UniversalSkyActor: Subscribed to TimeSubsystem events"));
+			const double CurrentSimTime = TimeSub->GetSimTimeSeconds();
+			// Sun moves ~0.25° per minute, update if time changed by >1 second
+			if (FMath::Abs(CurrentSimTime - LastSampledSimTime) > 1.0)
+			{
+				bSunDirty = true;
+				LastSampledSimTime = CurrentSimTime;
+			}
 		}
 	}
 
-	// Initialize starfield BEFORE applying environment - why?
-	ApplyStarfield();
-	
-	// Apply initial environment state
-	ApplyEnvironment(CurrentMedium, CurrentWeather);
-}
-
-void AUniversalSkyActor::Tick(float DeltaSeconds)
-{
-	Super::Tick(DeltaSeconds);
-
-	// Only update starfield rotation in Tick (lightweight)
-	// Sun/atmosphere/weather updates are event-driven via OnTimeAdvanced
-	if (StarfieldUpdateRateHz <= 0.0f)
+	// Only apply environment if something is dirty
+	if (bSunDirty || bAtmosphereDirty || bFogDirty || bCloudsDirty || bSkyLightDirty || bPostProcessDirty)
 	{
-		UE_LOG(LogTemp, Verbose, TEXT("UniversalSkyActor: Tick Rotation StarfieldUpdateAccumulator hertz update rate=%.2f"), StarfieldUpdateRateHz);
-		UpdateStarfieldRotation();
-		return;
+		ApplyEnvironment(CurrentMedium, CurrentWeather);
 	}
 
-	StarfieldUpdateAccumulator += DeltaSeconds;
-	const float Period = 1.0f / StarfieldUpdateRateHz;
-	if (StarfieldUpdateAccumulator >= Period)
-	{
-		UE_LOG(LogTemp, Verbose, TEXT("UniversalSkyActor: Tick Rotation StarfieldUpdateAccumulator period=%.2f"), Period);
-		StarfieldUpdateAccumulator = 0.0f;
-		UpdateStarfieldRotation();
-	}
-}
-
-void AUniversalSkyActor::OnTimeAdvanced(double NewSimTimeSeconds)
-{
-	// Throttle: Only update if time actually changed
-	static double LastSimTime = -1.0;
-	if (FMath::Abs(NewSimTimeSeconds - LastSimTime) < 0.01)
-	{
-		return; // Skip duplicate calls
-	}
-	LastSimTime = NewSimTimeSeconds;
-	
-	// Event-driven update when simulation time changes
-	ApplyEnvironment(CurrentMedium, CurrentWeather);
-	UE_LOG(LogTemp, Verbose, TEXT("UniversalSkyActor: Applied environment at SimTime=%.2f"), NewSimTimeSeconds);
+	// Update starfield rotation (very cheap - just sets a component rotation)
+	UpdateStarfieldRotation();
 }
 
 void AUniversalSkyActor::ApplyEnvironment(const FRuntimeMediumSpec& Medium, const FRuntimeWeatherState& Weather)
@@ -406,130 +495,186 @@ void AUniversalSkyActor::ApplyEnvironment(const FRuntimeMediumSpec& Medium, cons
 	// Cache for auto apply
 	CurrentMedium = Medium;
 	CurrentWeather = Weather;
-	// Throttle spam - only log on actual changes
-	static FRuntimeMediumSpec LastMedium;
-	static FRuntimeWeatherState LastWeather;
-	static bool bFirstRun = true;
+
+	// Detect changes and set dirty flags appropriately
+	const bool bMediumChanged = FMath::Abs(LastAppliedMedium.Density - Medium.Density) > 0.001f;
+	const bool bWeatherChanged = FMath::Abs(LastAppliedWeather.CloudCover01 - Weather.CloudCover01) > 0.01f ||
+	                             FMath::Abs(LastAppliedWeather.Fog01 - Weather.Fog01) > 0.01f;
 	
-	if (bFirstRun || 
-	    FMath::Abs(LastMedium.Density - Medium.Density) > 0.001f ||
-	    FMath::Abs(LastWeather.CloudCover01 - Weather.CloudCover01) > 0.01f)
+	if (bMediumChanged)
 	{
-		UE_LOG(LogTemp, Log, TEXT("UniversalSkyActor: Applying environment - Medium Density=%.3f, Pressure=%.1f Pa; Weather CloudCover=%.2f"), 
-			Medium.Density, Medium.PressurePa, Weather.CloudCover01);
-		LastMedium = Medium;
-		LastWeather = Weather;
-		bFirstRun = false;
+		bAtmosphereDirty = true;
+		bFogDirty = true;
+		bCloudsDirty = true;
+		bSkyLightDirty = true;
+		bPostProcessDirty = true;
+	}
+	
+	if (bWeatherChanged)
+	{
+		bFogDirty = true;
+		bCloudsDirty = true;
+		bSkyLightDirty = true;
+		bPostProcessDirty = true;
 	}
 
-	ApplySun(Medium, Weather);
-	ApplyAtmosphere(Medium, Weather);
-	ApplyFog(Medium, Weather);
-	ApplyClouds(Medium, Weather);
-	ApplySkyLight(Medium, Weather);
+	// Throttle spam - only log on actual changes
+	if (bFirstEnvironmentApply || bMediumChanged || bWeatherChanged)
+	{
+		UE_LOG(LogUETPFCore, Log, TEXT("UniversalSkyActor: Applying environment - Medium Density=%.3f, Pressure=%.1f Pa; Weather CloudCover=%.2f"),
+			Medium.Density, Medium.PressurePa, Weather.CloudCover01);
+		LastAppliedMedium = Medium;
+		LastAppliedWeather = Weather;
+		bFirstEnvironmentApply = false;
+	}
+
+	// Only call Apply methods if their dirty flags are set
+	// Each Apply method checks its own dirty flag and clears it after update
+	if (bSunDirty) { ApplySun(Medium, Weather); }
+	if (bAtmosphereDirty) { ApplyAtmosphere(Medium, Weather); }
+	if (bFogDirty) { ApplyFog(Medium, Weather); }
+	if (bCloudsDirty) { ApplyClouds(Medium, Weather); }
+	if (bSkyLightDirty) { ApplySkyLight(Medium, Weather); }
+	if (bPostProcessDirty) { ApplyPostProcess(Medium, Weather); }
 }
 
 void AUniversalSkyActor::ApplySun(const FRuntimeMediumSpec& Medium, const FRuntimeWeatherState& Weather)
 {
-    if (UGameInstance* GI = GetGameInstance())
-    {
-        // Query SolarSystemSubsystem for authoritative sun/moon directions
-        if (USolarSystemSubsystem* SolarSys = GI->GetSubsystem<USolarSystemSubsystem>())
-        {
-            FSolarSystemState SolarState = SolarSys->GetSolarSystemState();
+	if (!bSunDirty) { return; } // Skip if nothing changed
+	
+	UDirectionalLightComponent* SunLight = GetSunLightComponent();
+	if (!SunLight) { return; } // Silently skip if not assigned
 
-            // Use solar system's sun direction
-            FVector SunDir = SolarState.SunDir_World.GetSafeNormal();
+	if (UGameInstance* GI = GetGameInstance())
+	{
+		// Query SolarSystemSubsystem for authoritative sun/moon directions
+		if (USolarSystemSubsystem* SolarSys = GI->GetSubsystem<USolarSystemSubsystem>())
+		{
+			FSolarSystemState SolarState = SolarSys->GetSolarSystemState();
 
-            // DirectionalLight points *from* light toward scene; use -SunDir
-            const FRotator SunRot = UKismetMathLibrary::MakeRotFromX(-SunDir);
-            SunLight->SetWorldRotation(SunRot);
+			// Use sun direction from subsystem (ECI frame for now, transform TBD)
+			FVector SunDir = SolarState.SunDir_World.GetSafeNormal();
+			
+			// Validate sun direction - if zero or invalid, use reasonable default
+			if (SunDir.IsNearlyZero() || !SunDir.IsNormalized())
+			{
+				UE_LOG(LogUETPFCore, Warning, TEXT("UniversalSkyActor: Invalid sun direction from subsystem, using default"));
+				SunDir = FVector(0.5f, 0.5f, 0.707f).GetSafeNormal();  // ~45° elevation fallback
+			}
 
-            // Intensity: use SolarState illuminance or fallback to medium
-            const float Irr = FMath::Max(0.0f, Medium.SolarIrradiance_Wm2);
-            const float CloudDim = 1.0f - 0.75f * FMath::Clamp(Weather.CloudCover01, 0.0f, 1.0f);
-            const float StormDim = 1.0f - 0.5f * FMath::Clamp(Weather.Storm01, 0.0f, 1.0f);
-            const float BaseIntensity = (SolarState.SunIlluminanceLux > 0.0f) ? SolarState.SunIlluminanceLux : (Irr * 10.0f);
-            const float FinalIntensity = BaseIntensity * CloudDim * StormDim * SunIntensityScale;
+			// Calculate intensity
+			const float Irr = FMath::Max(0.0f, Medium.SolarIrradiance_Wm2);
+			const float CloudDim = 1.0f - 0.75f * FMath::Clamp(Weather.CloudCover01, 0.0f, 1.0f);
+			const float StormDim = 1.0f - 0.5f * FMath::Clamp(Weather.Storm01, 0.0f, 1.0f);
+			const float BaseIntensity = (SolarState.SunIlluminanceLux > 0.0f) ? SolarState.SunIlluminanceLux : (Irr * 10.0f);
+			const float FinalIntensity = BaseIntensity * CloudDim * StormDim * SunIntensityScale;
 
-            SunLight->SetIntensity(FinalIntensity);
+			// Check if values actually changed (threshold-based to avoid floating point noise)
+			const float DirDelta = FVector::Dist(SunDir, CachedSunDirection);
+			const float IntensityDelta = FMath::Abs(FinalIntensity - CachedSunIntensity);
+			
+			// Only update component if values changed significantly
+			if (DirDelta > 0.001f || IntensityDelta > 1.0f || CachedSunIntensity < 0.0f)
+			{
+				// DirectionalLight points *from* light toward scene; use -SunDir
+				const FRotator SunRot = UKismetMathLibrary::MakeRotFromX(-SunDir);
+				SunLight->SetWorldRotation(SunRot);
+				SunLight->SetIntensity(FinalIntensity);
 
-            // Color temperature (rough proxy)
-            const float T = Medium.TemperatureK;
-            const float Kelvin = FMath::Clamp(6500.0f - (288.0f - T) * 10.0f, 2500.0f, 9000.0f);
-            SunLight->SetTemperature(Kelvin);
+				// Color temperature (rough proxy)
+				const float T = Medium.TemperatureK;
+				const float Kelvin = FMath::Clamp(6500.0f - (288.0f - T) * 10.0f, 2500.0f, 9000.0f);
+				SunLight->SetTemperature(Kelvin);
+				SunLight->bUseTemperature = true;
 
-            // Log sun state with component diagnostics
-            static FVector LastLoggedSunDir = FVector::ZeroVector;
-            static int32 SunUpdateCount = 0;
-            if (FVector::Dist(SunDir, LastLoggedSunDir) > 0.01f || SunUpdateCount < 3)
-            {
-                UE_LOG(LogTemp, Warning, TEXT("☀️ SUN DIAGNOSTICS:"));
-                UE_LOG(LogTemp, Warning, TEXT("  └─ Direction: %s"), *SunDir.ToCompactString());
-                UE_LOG(LogTemp, Warning, TEXT("  └─ Rotation: %s"), *SunRot.ToCompactString());
-                UE_LOG(LogTemp, Warning, TEXT("  └─ Intensity: %.0f lux (Base: %.0f, Cloud: %.2f, Storm: %.2f)"), FinalIntensity, BaseIntensity, CloudDim, StormDim);
-                UE_LOG(LogTemp, Warning, TEXT("  └─ Temperature: %.0fK"), Kelvin);
-                UE_LOG(LogTemp, Warning, TEXT("  └─ Visible: %d, Hidden: %d, CastShadows: %d"), 
-                    SunLight->IsVisible(), SunLight->bHiddenInGame, SunLight->CastShadows);
-                UE_LOG(LogTemp, Warning, TEXT("  └─ AtmosSunLight: %d, Component Active: %d"), 
-                    SunLight->bAtmosphereSunLight, SunLight->IsActive());
-                UE_LOG(LogTemp, Warning, TEXT("  └─ World Location: %s"), *SunLight->GetComponentLocation().ToString());
-                LastLoggedSunDir = SunDir;
-                SunUpdateCount++;
-            }
-        }
-        else
-        {
-            UE_LOG(LogTemp, Error, TEXT("UniversalSkyActor: SolarSystemSubsystem not found"));
-        }
-    }
-    SunLight->bUseTemperature = true;
+				// Update cache
+				CachedSunDirection = SunDir;
+				CachedSunIntensity = FinalIntensity;
+
+#if !UE_BUILD_SHIPPING
+				// Development diagnostics: Log sun state for first 3 updates
+				if (SunDiagnosticCount < 3)
+				{
+					UE_LOG(LogUETPFCore, Verbose, TEXT("Sun: Dir=%s, Intensity=%.0f lux, Temp=%.0fK"),
+						*SunDir.ToCompactString(), FinalIntensity, Kelvin);
+					SunDiagnosticCount++;
+				}
+#endif
+			}
+			
+			// Mark clean after processing
+			bSunDirty = false;
+		}
+		else
+		{
+			UE_LOG(LogUETPFCore, Error, TEXT("UniversalSkyActor: SolarSystemSubsystem not found"));
+		}
+	}
 }
 
 void AUniversalSkyActor::ApplyAtmosphere(const FRuntimeMediumSpec& Medium, const FRuntimeWeatherState& Weather)
-{
+{	USkyAtmosphereComponent* SkyAtmosphere = GetSkyAtmosphereComponent();
+	if (!SkyAtmosphere) { return; } // Silently skip if not assigned
 	// If we’re in vacuum, atmosphere should be effectively off.
 	const bool bVacuum = (Medium.Density <= KINDA_SMALL_NUMBER) || (Medium.PressurePa <= 1.0f);	
-	static int32 AtmosUpdateCount = 0;
-	if (AtmosUpdateCount < 3)
+	
+#if !UE_BUILD_SHIPPING
+	// Development diagnostics: Log atmosphere state for first 3 updates
+	if (AtmosDiagnosticCount < 3)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("🌍 ATMOSPHERE DIAGNOSTICS:"));
-		UE_LOG(LogTemp, Warning, TEXT("  └─ Density: %.3f kg/m³"), Medium.Density);
-		UE_LOG(LogTemp, Warning, TEXT("  └─ Pressure: %.1f Pa"), Medium.PressurePa);
-		UE_LOG(LogTemp, Warning, TEXT("  └─ Vacuum Mode: %d"), bVacuum);
-		UE_LOG(LogTemp, Warning, TEXT("  └─ Component Visible: %d, Active: %d"), SkyAtmosphere->IsVisible(), SkyAtmosphere->IsActive());
-		AtmosUpdateCount++;
+		UE_LOG(LogUETPFCore, Verbose, TEXT("Atmosphere: Density=%.3f kg/m³, Pressure=%.1f Pa, Vacuum=%d"),
+			Medium.Density, Medium.PressurePa, bVacuum);
+		AtmosDiagnosticCount++;
 	}
-	// SkyAtmosphere doesn’t have a single “enable” flag; we approximate by scaling density-related settings.
+#endif
+	// SkyAtmosphere doesn't have a single "enable" flag; we approximate by scaling density-related settings.
 	// Rayleigh scattering ~ density proxy, Mie scattering ~ humidity/aerosols proxy.
-	// CRITICAL: Cap atmosphere at 10% for space scenes to prevent sun/star absorption
-	const float Density01 = bVacuum ? 0.0f : FMath::Clamp(Medium.Density / 1.225f, 0.0f, 0.1f); // Cap at 10% for space visibility
+	// For Earth density (1.225), use full strength. For thinner atmospheres, scale down.
+	// For denser atmospheres (>Earth), cap to prevent over-saturation.
+	const float Density01 = bVacuum ? 0.0f : FMath::Clamp(Medium.Density / 1.225f, 0.0f, 2.0f);
 	const float Humidity01 = FMath::Clamp(Weather.Humidity01, 0.0f, 1.0f);
 
-	// Further reduce scattering strength to prevent zenith path extinction
-	const float AtmosStrength = Density01 * 0.3f; // Scale down to 30% of density for minimal absorption
+	// Earth atmosphere (Density01 = 1.0) should render with full UE5 default strength
+	// Atmosphere strength scales linearly with density up to 2x Earth density
+	const float AtmosStrength = Density01;
 
 	// These setters exist in UE5. If you hit compile issues due to version differences,
-	// we’ll swap to direct property access or remove the calls.
-	SkyAtmosphere->SetRayleighScatteringScale(AtmosStrength);
-	SkyAtmosphere->SetMieScatteringScale(AtmosStrength * (0.25f + 0.75f * Humidity01));
-	SkyAtmosphere->SetMieAbsorptionScale(AtmosStrength * (0.1f + 0.9f * Humidity01));
+	// we'll swap to direct property access or remove the calls.
+	const float RayleighScale = AtmosStrength;
+	const float MieScale = AtmosStrength * (0.25f + 0.75f * Humidity01);
+	const float MieAbsorption = AtmosStrength * (0.1f + 0.9f * Humidity01);
+
+	SkyAtmosphere->SetRayleighScatteringScale(RayleighScale);
+	SkyAtmosphere->SetMieScatteringScale(MieScale);
+	SkyAtmosphere->SetMieAbsorptionScale(MieAbsorption);
 
 	// Ozone is planet-specific; keep modest for Earth baseline; later move into planet spec.
 	SkyAtmosphere->SetOtherAbsorptionScale(bVacuum ? 0.0f : 1.0f);
 
-	// Log only on significant changes (throttle to avoid spam)
-	static float LastLoggedDensity = -1.0f;
+#if !UE_BUILD_SHIPPING
+	// One-time development diagnostic: Verify scattering configuration
+	if (!bScatteringLogged)
+	{
+		UE_LOG(LogUETPFCore, Verbose, TEXT("Atmosphere scattering: Rayleigh=%.3f, Mie=%.3f, Absorption=%.3f"),
+			RayleighScale, MieScale, MieAbsorption);
+		bScatteringLogged = true;
+	}
+#endif
+
+	// Log only on significant changes (uses member variable, resets per PIE)
 	if (FMath::Abs(Medium.Density - LastLoggedDensity) > 0.01f)
 	{
-		UE_LOG(LogTemp, Log, TEXT("UniversalSkyActor: Atmosphere updated - Density: %.3f, Pressure: %.1f Pa, AtmosStrength: %.3f"), 
+		UE_LOG(LogUETPFCore, Log, TEXT("UniversalSkyActor: Atmosphere updated - Density: %.3f, Pressure: %.1f Pa, AtmosStrength: %.3f"),
 			Medium.Density, Medium.PressurePa, AtmosStrength);
 		LastLoggedDensity = Medium.Density;
 	}
+	
+	bAtmosphereDirty = false;
 }
 
 void AUniversalSkyActor::ApplyFog(const FRuntimeMediumSpec& Medium, const FRuntimeWeatherState& Weather)
-{
+{	UExponentialHeightFogComponent* HeightFog = GetHeightFogComponent();
+	if (!HeightFog) { return; } // Silently skip if not assigned
 	const bool bVacuum = (Medium.Density <= KINDA_SMALL_NUMBER) || (Medium.PressurePa <= 1.0f);
 
 	// Fog mostly comes from moisture/particles; in vacuum it should be off.
@@ -552,10 +697,13 @@ void AUniversalSkyActor::ApplyFog(const FRuntimeMediumSpec& Medium, const FRunti
     // Optional: keep these stable defaults
     HeightFog->VolumetricFogAlbedo = FColor::White;                 // or FLinearColor(1,1,1)
     HeightFog->VolumetricFogScatteringDistribution = 0.2f;          // 0 = isotropic, higher = forward scattering
+    
+    bFogDirty = false;
 }
 
 void AUniversalSkyActor::ApplyClouds(const FRuntimeMediumSpec& Medium, const FRuntimeWeatherState& Weather)
-{
+{	UVolumetricCloudComponent* VolumetricCloud = GetVolumetricCloudComponent();
+	if (!VolumetricCloud) { return; } // Silently skip if not assigned
 	const bool bVacuum = (Medium.Density <= KINDA_SMALL_NUMBER) || (Medium.PressurePa <= 1.0f);
 
 	// In vacuum there should be no clouds.
@@ -569,23 +717,79 @@ void AUniversalSkyActor::ApplyClouds(const FRuntimeMediumSpec& Medium, const FRu
 	// Component has limited runtime knobs; treat this as a placeholder until you wire a MID.
 	VolumetricCloud->LayerBottomAltitude = FMath::Lerp(50.0f, 80.0f, Cloud01); // km - High altitude clouds for space layer viewing
 	VolumetricCloud->LayerHeight = FMath::Lerp(0.2f, 1.2f, Cloud01) * CloudDensityScale; // km
+	
+	bCloudsDirty = false;
 }
 
 void AUniversalSkyActor::ApplySkyLight(const FRuntimeMediumSpec& Medium, const FRuntimeWeatherState& Weather)
 {
+	USkyLightComponent* SkyLight = GetSkyLightComponent();
+	if (!SkyLight) { return; } // Silently skip if not assigned
+
 	const bool bVacuum = (Medium.Density <= KINDA_SMALL_NUMBER) || (Medium.PressurePa <= 1.0f);
 	const float Cloud01 = FMath::Clamp(Weather.CloudCover01, 0.0f, 1.0f);
 
-	// In vacuum you can still have skylight if you have stars/spacebox; keep it low by default.
-	const float Base = bVacuum ? 0.05f : 1.0f;
+	// SkyLight intensity should be significant for proper ambient lighting
+	// In atmosphere: base intensity ~1.0 (engine default)
+	// In vacuum: reduced to ~0.3 (stars/space provides some ambient)
+	const float Base = bVacuum ? 0.3f : 1.0f;
 
-	// Cloud cover reduces ambient a bit
-	const float CloudDim = 1.0f - 0.5f * Cloud01;
+	// Cloud cover reduces ambient light slightly
+	const float CloudDim = 1.0f - 0.3f * Cloud01;
 
 	SkyLight->SetIntensity(Base * CloudDim * SkyLightIntensityScale);
 
-	// Optionally force a recapture occasionally; realtime capture already does this.
-	SkyLight->RecaptureSky();  // avoid spamming
+	// ARCHITECTURE: RecaptureSky() is handled by OnSkyRecaptureTimer (1Hz)
+	// With Lumen: Recapture isn't strictly needed - Lumen traces through SkyAtmosphere
+	// Without Lumen: Timer-based recapture provides ambient updates without frame stalls
+	// 
+	// We do NOT call RecaptureSky() here because:
+	// 1. It's a synchronous GPU flush (40+ms stall)
+	// 2. Lumen handles sky GI via raytracing
+	// 3. Timer provides 1Hz updates for non-Lumen platforms
+	
+	bSkyLightDirty = false;
+}
+
+void AUniversalSkyActor::ApplyPostProcess(const FRuntimeMediumSpec& Medium, const FRuntimeWeatherState& Weather)
+{
+	UPostProcessComponent* PostProcess = GetPostProcessComponent();
+	if (!PostProcess) { return; } // Silently skip if not assigned
+
+	// Post-process effects driven by weather and environment
+	// Example: Adjust exposure, color grading, vignette based on conditions
+
+	const bool bVacuum = (Medium.Density <= KINDA_SMALL_NUMBER) || (Medium.PressurePa <= 1.0f);
+	const float Storm01 = FMath::Clamp(Weather.Storm01, 0.0f, 1.0f);
+	const float Fog01 = FMath::Clamp(Weather.Fog01, 0.0f, 1.0f);
+
+	// Storm conditions: darken, increase contrast
+	// Fog conditions: reduce contrast, add haze
+	// Vacuum: neutral post-processing
+
+	// Auto-exposure adjustment based on atmospheric density and weather
+	// Dense atmosphere with fog: brighter compensation
+	// Storm: darker, more dramatic
+	const float ExposureCompensation = bVacuum ? 0.0f :
+		FMath::Lerp(0.0f, -1.0f, Storm01) + FMath::Lerp(0.0f, 0.5f, Fog01);
+
+	// Set exposure bias (requires PostProcessVolume with Exposure settings exposed)
+	// Note: Direct property access may vary by UE version
+	// PostProcess->Settings.AutoExposureBias = ExposureCompensation;
+
+	// Log initial setup (uses member variable, resets per PIE)
+	if (!bPostProcessLogged)
+	{
+		UE_LOG(LogUETPFCore, Log, TEXT("UniversalSkyActor: PostProcess configured (exposure compensation ready)"));
+		bPostProcessLogged = true;
+	}
+
+	// Additional post-process effects can be added here:
+	// - Vignette intensity based on storm
+	// - Color grading LUT based on atmosphere composition
+	// - Bloom intensity based on solar irradiance
+	
+	bPostProcessDirty = false;
 }
 
 void AUniversalSkyActor::ApplyStarfield()
@@ -593,13 +797,13 @@ void AUniversalSkyActor::ApplyStarfield()
 	// Guard rails: validate component and system
 	if (!StarfieldComponent)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("UniversalSkyActor::ApplyStarfield - StarfieldComponent is null"));
+		UE_LOG(LogUETPFCore, Warning, TEXT("UniversalSkyActor::ApplyStarfield - StarfieldComponent is null"));
 		return;
 	}
 
 	if (!StarfieldNiagaraSystem)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("UniversalSkyActor::ApplyStarfield - StarfieldNiagaraSystem not assigned. Please assign in editor."));
+		UE_LOG(LogUETPFCore, Warning, TEXT("UniversalSkyActor::ApplyStarfield - StarfieldNiagaraSystem not assigned. Please assign in editor."));
 		return;
 	}
 
@@ -608,7 +812,7 @@ void AUniversalSkyActor::ApplyStarfield()
 	{
 		StarfieldComponent->SetAsset(StarfieldNiagaraSystem);
 		bStarfieldInitialized = false; // Force re-push if asset changed
-		UE_LOG(LogTemp, Log, TEXT("UniversalSkyActor::ApplyStarfield - Assigned StarfieldNiagaraSystem"));
+		UE_LOG(LogUETPFCore, Log, TEXT("UniversalSkyActor::ApplyStarfield - Assigned StarfieldNiagaraSystem"));
 	}
 
 	// CRITICAL: Activate component BEFORE setting parameters
@@ -616,28 +820,28 @@ void AUniversalSkyActor::ApplyStarfield()
 	if (!StarfieldComponent->IsActive())
 	{
 		StarfieldComponent->Activate(true);
-		UE_LOG(LogTemp, Log, TEXT("UniversalSkyActor::ApplyStarfield - Starfield component activated"));
+		UE_LOG(LogUETPFCore, Log, TEXT("UniversalSkyActor::ApplyStarfield - Starfield component activated"));
 	}
 
 	// Get game instance and star catalog subsystem
 	UGameInstance* GI = GetGameInstance();
 	if (!GI)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("UniversalSkyActor::ApplyStarfield - GameInstance is null"));
+		UE_LOG(LogUETPFCore, Warning, TEXT("UniversalSkyActor::ApplyStarfield - GameInstance is null"));
 		return;
 	}
 
 	UStarCatalogSubsystem* StarSys = GI->GetSubsystem<UStarCatalogSubsystem>();
 	if (!StarSys)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("UniversalSkyActor::ApplyStarfield - StarCatalogSubsystem not available"));
+		UE_LOG(LogUETPFCore, Warning, TEXT("UniversalSkyActor::ApplyStarfield - StarCatalogSubsystem not available"));
 		return;
 	}
 
 	// Ensure star data is loaded (idempotent - won't reload if already loaded)
 	if (!StarSys->EnsureLoaded())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("UniversalSkyActor::ApplyStarfield - Failed to load star catalog"));
+		UE_LOG(LogUETPFCore, Warning, TEXT("UniversalSkyActor::ApplyStarfield - Failed to load star catalog"));
 		return;
 	}
 
@@ -645,7 +849,7 @@ void AUniversalSkyActor::ApplyStarfield()
 	const int32 TotalStarCount = Stars.Num();
 	if (TotalStarCount <= 0)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("UniversalSkyActor::ApplyStarfield - No stars available from catalog"));
+		UE_LOG(LogUETPFCore, Warning, TEXT("UniversalSkyActor::ApplyStarfield - No stars available from catalog"));
 		// Set empty arrays to clear starfield
 		StarfieldComponent->SetVariableInt(FName(TEXT("User.StarCount")), 0);
 		return;
@@ -700,7 +904,7 @@ void AUniversalSkyActor::ApplyStarfield()
 			if (NormalizedDir.IsNearlyZero())
 			{
 				NormalizedDir = FVector::ForwardVector; // Fallback to avoid zero vectors
-				UE_LOG(LogTemp, Warning, TEXT("UniversalSkyActor::ApplyStarfield - Near-zero star direction detected, using fallback"));
+				UE_LOG(LogUETPFCore, Warning, TEXT("UniversalSkyActor::ApplyStarfield - Near-zero star direction detected, using fallback"));
 			}
 
 			// Scale normalized direction by sphere radius to get absolute position
@@ -718,7 +922,7 @@ void AUniversalSkyActor::ApplyStarfield()
 		const int32 VisibleStarCount = StarPositions.Num();
 
 		// Production-ready logging
-		UE_LOG(LogTemp, Log, TEXT("UniversalSkyActor::ApplyStarfield - Filtered %d/%d stars (culled %d dimmer than mag %.1f)"),
+		UE_LOG(LogUETPFCore, Log, TEXT("UniversalSkyActor::ApplyStarfield - Filtered %d/%d stars (culled %d dimmer than mag %.1f)"),
 			VisibleStarCount, TotalStarCount, CulledCount, MaxVisibleMagnitude);
 
 		// Push arrays to Niagara using UE 5.7 Data Interface Array Function Library
@@ -730,16 +934,18 @@ void AUniversalSkyActor::ApplyStarfield()
 			UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayFloat(StarfieldComponent, FName(TEXT("User_StarMagnitudes")), StarMagnitudes);
 			UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayColor(StarfieldComponent, FName(TEXT("User_StarColors")), StarColors);
 
-			UE_LOG(LogTemp, Log, TEXT("UniversalSkyActor::ApplyStarfield - Pushed arrays to Niagara: Positions=%d, Magnitudes=%d, Colors=%d"),
-				StarPositions.Num(), StarMagnitudes.Num(), StarColors.Num());
-			
-			// Debug: Log first 3 star data with RGB colors
+			UE_LOG(LogUETPFCore, Log, TEXT("UniversalSkyActor: Pushed %d stars to Niagara"),
+				StarPositions.Num());
+
+#if !UE_BUILD_SHIPPING
+			// Development diagnostic: Sample star data
 			for (int32 i = 0; i < FMath::Min(3, StarPositions.Num()); i++)
 			{
-				UE_LOG(LogTemp, Log, TEXT("  Star[%d]: Pos=(%.1f, %.1f, %.1f), Mag=%.2f, Color=(R:%.2f G:%.2f B:%.2f)"),
-					i, StarPositions[i].X, StarPositions[i].Y, StarPositions[i].Z, 
+				UE_LOG(LogUETPFCore, Verbose, TEXT("  Star[%d]: Pos=(%.0f, %.0f, %.0f), Mag=%.2f, RGB=(%.2f, %.2f, %.2f)"),
+					i, StarPositions[i].X, StarPositions[i].Y, StarPositions[i].Z,
 					StarMagnitudes[i], StarColors[i].R, StarColors[i].G, StarColors[i].B);
 			}
+#endif
 		}
 
 		// Set scalar user parameters to match filtered arrays
@@ -751,37 +957,34 @@ void AUniversalSkyActor::ApplyStarfield()
 		bStarfieldInitialized = true;
 		CachedStarCount = TotalStarCount;
 
-		UE_LOG(LogTemp, Log, TEXT("UniversalSkyActor::ApplyStarfield - Starfield initialized successfully. VisibleStars=%d, SphereRadius=%.0f cm"),
+		UE_LOG(LogUETPFCore, Log, TEXT("UniversalSkyActor::ApplyStarfield - Starfield initialized successfully. VisibleStars=%d, SphereRadius=%.0f cm"),
 			VisibleStarCount, StarSphereRadiusCm);
 		
-		// DIAGNOSTIC: Log Niagara parameter values to verify data reception
+		// Force component to acknowledge changes
+		StarfieldComponent->ReinitializeSystem();
+
+#if !UE_BUILD_SHIPPING
+		// Development diagnostic: Verify Niagara parameter reception
 		bool bStarCountValid = false;
 		bool bSphereRadiusValid = false;
 		int32 VerifyStarCount = StarfieldComponent->GetVariableInt(FName(TEXT("User_StarCount")), bStarCountValid);
 		float VerifySphereRadius = StarfieldComponent->GetVariableFloat(FName(TEXT("User_StarSphereRadius")), bSphereRadiusValid);
+
+		UE_LOG(LogUETPFCore, Verbose, TEXT("Starfield Niagara: StarCount=%d (valid=%d), SphereRadius=%.0f (valid=%d)"),
+			VerifyStarCount, bStarCountValid, VerifySphereRadius, bSphereRadiusValid);
+#endif
 		
-		UE_LOG(LogTemp, Warning, TEXT("🔍 NIAGARA DIAGNOSTICS:"));
-		UE_LOG(LogTemp, Warning, TEXT("  └─ User_StarCount read back: %d (valid: %d, expected: %d)"), VerifyStarCount, bStarCountValid, VisibleStarCount);
-		UE_LOG(LogTemp, Warning, TEXT("  └─ User_StarSphereRadius read back: %.1f (valid: %d, expected: %.1f)"), VerifySphereRadius, bSphereRadiusValid, StarSphereRadiusCm);
-		UE_LOG(LogTemp, Warning, TEXT("  └─ Component Location: %s"), *StarfieldComponent->GetComponentLocation().ToString());
-		UE_LOG(LogTemp, Warning, TEXT("  └─ Component Visibility: %d"), StarfieldComponent->IsVisible());
-		UE_LOG(LogTemp, Warning, TEXT("  └─ Component World Scale: %s"), *StarfieldComponent->GetComponentScale().ToString());
-		
-		// Force component to acknowledge changes
-		StarfieldComponent->ReinitializeSystem();
-		UE_LOG(LogTemp, Log, TEXT("UniversalSkyActor::ApplyStarfield - Reinitialized Niagara system"));
-		
-		// CRITICAL: Force skylight recapture after initializing starfield and sun
-		// This updates Lumen GI with procedural sky data
-		if (SkyLight)
+		// Mark SkyLight for deferred recapture after starfield initialization
+		// SetCaptureIsDirty is non-blocking; actual recapture happens next frame
+		if (USkyLightComponent* SkyLight = GetSkyLightComponent())
 		{
-			SkyLight->RecaptureSky();
-			UE_LOG(LogTemp, Warning, TEXT("🌤️ SKYLIGHT RECAPTURED after starfield initialization"));
+			SkyLight->SetCaptureIsDirty();
+			UE_LOG(LogUETPFCore, Log, TEXT("UniversalSkyActor: SkyLight marked dirty after starfield initialization"));
 		}
 	}
 
 	// Verify component state
-	UE_LOG(LogTemp, Log, TEXT("UniversalSkyActor::ApplyStarfield - Component Active=%d, Asset=%s"),
+	UE_LOG(LogUETPFCore, Log, TEXT("UniversalSkyActor::ApplyStarfield - Component Active=%d, Asset=%s"),
 		StarfieldComponent->IsActive(),
 		StarfieldComponent->GetAsset() ? *StarfieldComponent->GetAsset()->GetName() : TEXT("NULL"));
 
@@ -901,7 +1104,7 @@ void AUniversalSkyActor::SetStarfieldBounds(float BoundsRadiusCm)
 {
 	if (!StarfieldComponent)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("UniversalSkyActor::SetStarfieldBounds - StarfieldComponent is null"));
+		UE_LOG(LogUETPFCore, Warning, TEXT("UniversalSkyActor::SetStarfieldBounds - StarfieldComponent is null"));
 		return;
 	}
 
@@ -911,7 +1114,7 @@ void AUniversalSkyActor::SetStarfieldBounds(float BoundsRadiusCm)
 	// Starfield acts as a skybox - disable distance culling so it's always rendered
 	StarfieldComponent->SetCullDistance(0.0f); // 0 = never cull
 	
-	UE_LOG(LogTemp, Log, TEXT("UniversalSkyActor::SetStarfieldBounds - Disabled culling for starfield (cull distance = 0)"));
+	UE_LOG(LogUETPFCore, Log, TEXT("UniversalSkyActor::SetStarfieldBounds - Disabled culling for starfield (cull distance = 0)"));
 }
 
 

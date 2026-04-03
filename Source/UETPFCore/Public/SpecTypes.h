@@ -157,6 +157,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Friction", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float Restitution = 0.2f;
 
+	/** Rolling resistance coefficient - energy loss from rolling objects (wheels, balls, barrels). Typical values: hard surface 0.001-0.01, soft surface 0.05-0.15 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Friction", meta = (ClampMin = "0.0", ClampMax = "0.5"))
+	float RollingResistance = 0.01f;
+
 	//--- Deformation ---
 	
 	/** Compliance (softness) - how much the surface gives under load. 0=rigid, 1=very soft */
@@ -504,6 +508,10 @@ struct UETPFCORE_API FRuntimeSurfaceSpec
 	UPROPERTY(BlueprintReadOnly, Category = "Friction")
 	float Restitution = 0.2f;
 
+	/** Rolling resistance coefficient - resists rolling motion */
+	UPROPERTY(BlueprintReadOnly, Category = "Friction")
+	float RollingResistance = 0.01f;
+
 	/** Wetness friction multiplier (1.0 = no change when wet) */
 	UPROPERTY(BlueprintReadOnly, Category = "Friction")
 	float WetFrictionMultiplier = 0.7f;
@@ -526,9 +534,6 @@ struct UETPFCORE_API FRuntimeSurfaceSpec
 	float RecoveryRatePerS = 0.0f;
 
 	//--- Vehicle/Character response ---
-	UPROPERTY(BlueprintReadOnly, Category = "Response")
-	float RollingResistance = 0.01f;
-
 	UPROPERTY(BlueprintReadOnly, Category = "Response")
 	float FootstepImpulseDamping = 0.0f;
 

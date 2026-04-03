@@ -8,6 +8,7 @@
 #include "Engine/World.h"
 #include "LandscapeComponent.h"
 #include "Kismet/KismetSystemLibrary.h"
+#include "Log.h"
 
 //=============================================================================
 // UBiomeSubsystem
@@ -25,7 +26,7 @@ void UBiomeSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	SurfaceQuerySubsystem = GetWorld()->GetSubsystem<USurfaceQuerySubsystem>();
 	EnvironmentSubsystem = GetWorld()->GetSubsystem<UEnvironmentSubsystem>();
 
-	UE_LOG(LogTemp, Log, TEXT("BiomeSubsystem initialized for world: %s"), 
+	UE_LOG(LogUETPFCore, Log, TEXT("BiomeSubsystem initialized for world: %s"), 
 		*GetWorld()->GetName());
 }
 
@@ -260,7 +261,7 @@ void UBiomeSubsystem::RegisterBiomeSpec(const FBiomeSpec& Spec)
 	{
 		BiomeSpecs.Add(Spec.BiomeId.Id, Spec);
 
-		UE_LOG(LogTemp, Verbose, TEXT("Registered BiomeSpec: %s"), *Spec.BiomeId.Id.ToString());
+		UE_LOG(LogUETPFCore, Verbose, TEXT("Registered BiomeSpec: %s"), *Spec.BiomeId.Id.ToString());
 	}
 }
 
@@ -278,7 +279,7 @@ void UBiomeSubsystem::SetDefaultBiome(const FBiomeId& BiomeId)
 {
 	DefaultBiomeId = BiomeId;
 
-	UE_LOG(LogTemp, Log, TEXT("Default biome set to: %s"), *BiomeId.Id.ToString());
+	UE_LOG(LogUETPFCore, Log, TEXT("Default biome set to: %s"), *BiomeId.Id.ToString());
 }
 
 TArray<FBiomeId> UBiomeSubsystem::GetAllBiomeIds() const

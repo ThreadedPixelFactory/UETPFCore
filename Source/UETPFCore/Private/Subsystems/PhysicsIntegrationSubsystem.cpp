@@ -8,6 +8,7 @@
 #include "Components/PrimitiveComponent.h"
 #include "Engine/World.h"
 #include "PhysicsEngine/BodyInstance.h"
+#include "Log.h"
 
 DECLARE_CYCLE_STAT(TEXT("PhysicsIntegration Tick"), STAT_PhysicsIntegrationTick, STATGROUP_Game);
 
@@ -27,7 +28,7 @@ void UPhysicsIntegrationSubsystem::Initialize(FSubsystemCollectionBase& Collecti
 	SurfaceQuerySubsystem = GetWorld()->GetSubsystem<USurfaceQuerySubsystem>();
 	EnvironmentSubsystem = GetWorld()->GetSubsystem<UEnvironmentSubsystem>();
 
-	UE_LOG(LogTemp, Log, TEXT("PhysicsIntegrationSubsystem initialized"));
+	UE_LOG(LogUETPFCore, Log, TEXT("PhysicsIntegrationSubsystem initialized"));
 }
 
 void UPhysicsIntegrationSubsystem::Deinitialize()
@@ -53,6 +54,15 @@ void UPhysicsIntegrationSubsystem::Tick(float DeltaTime)
 	SCOPE_CYCLE_COUNTER(STAT_PhysicsIntegrationTick);
 
 	CurrentFrame++;
+
+	// TASK GRAPH NOTE: This per-body loop is the primary parallelism candidate in the framework.
+	// Each body's environment query and force calculation is independent of all others.
+	// When body counts grow (>50), consider:
+	//   1. Batch environment queries into N UE::Tasks::Launch tasks (partition RegisteredBodies)
+	//   2. Collect force vectors into a thread-safe array
+	//   3. Join before AddForce calls (physics component writes must stay on game thread)
+	// Prerequisite: EnvironmentSubsystem::GetEnvironmentAtLocation must be made read-only/const
+	// safe (it currently is, but verify any future volume registration changes don't break this).
 
 	// Process registered bodies
 	int32 BodiesProcessed = 0;
@@ -111,14 +121,14 @@ void UPhysicsIntegrationSubsystem::RegisterPhysicsBody(UPrimitiveComponent* Comp
 
 	if (!Component->IsSimulatingPhysics())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("RegisterPhysicsBody: Component %s is not simulating physics"), 
+		UE_LOG(LogUETPFCore, Warning, TEXT("RegisterPhysicsBody: Component %s is not simulating physics"), 
 			*Component->GetName());
 	}
 
 	RegisteredBodies.Add(Component, DamageSpecId);
 	BodyCaches.Add(Component, FBodyPhysicsCache());
 
-	UE_LOG(LogTemp, Verbose, TEXT("Registered physics body: %s"), *Component->GetName());
+	UE_LOG(LogUETPFCore, Verbose, TEXT("Registered physics body: %s"), *Component->GetName());
 }
 
 void UPhysicsIntegrationSubsystem::UnregisterPhysicsBody(UPrimitiveComponent* Component)
@@ -337,7 +347,7 @@ void UPhysicsIntegrationSubsystem::ProcessCollisionHit(
 		// Broadcast damage event
 		OnImpactDamage.Broadcast(Component, HitResult, ImpactEnergy, *FoundSpecId);
 
-		UE_LOG(LogTemp, Verbose, TEXT("Impact damage: %s, Energy: %.2f J (threshold: %.2f J)"),
+		UE_LOG(LogUETPFCore, Verbose, TEXT("Impact damage: %s, Energy: %.2f J (threshold: %.2f J)"),
 			*Component->GetName(), ImpactEnergy, DamageSpec->ImpactThresholdMin);
 	}
 }
@@ -382,7 +392,7 @@ void UPhysicsIntegrationSubsystem::CheckBodySleepState(UPrimitiveComponent* Comp
 		FTransform FinalTransform = Component->GetComponentTransform();
 		OnBodySettled.Broadcast(Component, FinalTransform);
 
-		UE_LOG(LogTemp, Verbose, TEXT("Body settled: %s at %s"),
+		UE_LOG(LogUETPFCore, Verbose, TEXT("Body settled: %s at %s"),
 			*Component->GetName(), *FinalTransform.GetLocation().ToString());
 	}
 

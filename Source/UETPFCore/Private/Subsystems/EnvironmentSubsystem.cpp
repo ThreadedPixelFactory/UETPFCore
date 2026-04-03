@@ -6,6 +6,7 @@
 #include "GlobalAtmosphereField.h"
 #include "Engine/World.h"
 #include "Engine/CollisionProfile.h"
+#include "Log.h"
 
 // Static fallback medium spec - Earth sea-level atmosphere (never fails)
 FRuntimeMediumSpec UEnvironmentSubsystem::FallbackMediumSpec = []()
@@ -52,7 +53,7 @@ void UEnvironmentSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
 	
-	UE_LOG(LogTemp, Log, TEXT("EnvironmentSubsystem initialized for world: %s"), 
+	UE_LOG(LogUETPFCore, Log, TEXT("EnvironmentSubsystem initialized for world: %s"), 
 		*GetWorld()->GetName());
 }
 
@@ -234,7 +235,7 @@ void UEnvironmentSubsystem::RegisterMediumSpec(const FMediumSpecId& SpecId, UMed
 	{
 		MediumSpecMap.Add(SpecId.Id, Spec);
 		
-		UE_LOG(LogTemp, Verbose, TEXT("Registered MediumSpec: %s"), *SpecId.Id.ToString());
+		UE_LOG(LogUETPFCore, Verbose, TEXT("Registered MediumSpec: %s"), *SpecId.Id.ToString());
 	}
 }
 
@@ -260,7 +261,7 @@ void UEnvironmentSubsystem::SetDefaultMediumSpec(UMediumSpec* Spec)
 	
 	if (Spec)
 	{
-		UE_LOG(LogTemp, Log, TEXT("Default MediumSpec set to: %s"), *Spec->SpecId.Id.ToString());
+		UE_LOG(LogUETPFCore, Log, TEXT("Default MediumSpec set to: %s"), *Spec->SpecId.Id.ToString());
 	}
 }
 
@@ -270,11 +271,11 @@ void UEnvironmentSubsystem::SetGlobalAtmosphereField(UGlobalAtmosphereField* Atm
 	
 	if (AtmosphereField)
 	{
-		UE_LOG(LogTemp, Log, TEXT("GlobalAtmosphereField set - altitude-based environment now active"));
+		UE_LOG(LogUETPFCore, Log, TEXT("GlobalAtmosphereField set - altitude-based environment now active"));
 	}
 	else
 	{
-		UE_LOG(LogTemp, Log, TEXT("GlobalAtmosphereField cleared - using DefaultMediumSpec only"));
+		UE_LOG(LogUETPFCore, Log, TEXT("GlobalAtmosphereField cleared - using DefaultMediumSpec only"));
 	}
 }
 
@@ -284,7 +285,7 @@ void UEnvironmentSubsystem::RegisterVolume(UEnvironmentVolumeComponent* Volume)
 	{
 		RegisteredVolumes.Add(Volume);
 		
-		UE_LOG(LogTemp, Verbose, TEXT("Registered EnvironmentVolume with MediumSpec: %s"), 
+		UE_LOG(LogUETPFCore, Verbose, TEXT("Registered EnvironmentVolume with MediumSpec: %s"), 
 			*Volume->MediumSpecId.Id.ToString());
 	}
 }
@@ -311,11 +312,11 @@ UEnvironmentVolumeComponent* UEnvironmentSubsystem::FindVolumeAtLocation(const F
 		}
 
 		// Check if location is inside this volume
+		float DistSq = 0.0f;
 		FVector ClosestPoint;
-		float DistSq = Volume->GetSquaredDistanceToCollision(WorldLocation, DistSq, ClosestPoint);
-		
-		// If distance is 0 or very small, we're inside
-		if (DistSq < 1.0f)
+		const bool bHasCollision = Volume->GetSquaredDistanceToCollision(WorldLocation, DistSq, ClosestPoint);
+
+		if (bHasCollision && DistSq < 1.0f)
 		{
 			if (Volume->Priority > BestPriority)
 			{
@@ -390,7 +391,7 @@ void UEnvironmentSubsystem::RegisterRuntimeMediumSpec(const FMediumSpecId& Id, c
 {
 	RuntimeMediumSpecs.Add(Id.Id, Spec);
 	
-	UE_LOG(LogTemp, Verbose, TEXT("Registered runtime MediumSpec: %s"), *Id.Id.ToString());
+	UE_LOG(LogUETPFCore, Verbose, TEXT("Registered runtime MediumSpec: %s"), *Id.Id.ToString());
 }
 
 bool UEnvironmentSubsystem::ResolveMediumSpec(const FMediumSpecId& Id, FRuntimeMediumSpec & OutSpec) const
@@ -437,7 +438,7 @@ TArray<FMediumSpecId> UEnvironmentSubsystem::GetAllRuntimeMediumSpecIds() const
 void UEnvironmentSubsystem::ClearRuntimeMediumSpecs()
 {
 	RuntimeMediumSpecs.Empty();
-	UE_LOG(LogTemp, Log, TEXT("Cleared all runtime MediumSpecs"));
+	UE_LOG(LogUETPFCore, Log, TEXT("Cleared all runtime MediumSpecs"));
 }
 
 const FRuntimeMediumSpec & UEnvironmentSubsystem::GetFallbackMediumSpec()

@@ -45,6 +45,7 @@ bool USurfaceSpec::ToStruct(FRuntimeSurfaceSpec& OutSpec) const
 	OutSpec.StaticFriction = FrictionStatic;
 	OutSpec.DynamicFriction = FrictionDynamic;
 	OutSpec.Restitution = Restitution;
+	OutSpec.RollingResistance = RollingResistance;
 
 	// Wetness response: sample curve at full wetness (1.0), default to 1.0 if no curve
 	// 1.0 = no change, <1 = slipperier when wet, >1 = stickier (mud/adhesion)

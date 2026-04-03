@@ -4,7 +4,6 @@
 
 #include "Subsystems/TimeSubsystem.h"
 #include "Engine/World.h"
-#include "Misc/ScopeLock.h"
 
 void UTimeSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
@@ -67,6 +66,14 @@ void UTimeSubsystem::ClampAndValidate()
 
 void UTimeSubsystem::Advance(double RealDeltaSeconds)
 {
+	// Startup diagnostics — verifies time is flowing correctly. Member variable resets per GameInstance.
+	if (AdvanceDiagnosticCount < 3)
+	{
+		UE_LOG(LogUETPFCore, Log, TEXT("TimeSubsystem::Advance #%d - RealDelta: %.4f, Paused: %d, TimeScale: %.2f"),
+			AdvanceDiagnosticCount, RealDeltaSeconds, bPaused, TimeScale);
+		AdvanceDiagnosticCount++;
+	}
+
 	if (bPaused || FMath::IsNearlyZero(TimeScale))
 	{
 		LastStepSeconds = 0.0;
@@ -84,28 +91,48 @@ void UTimeSubsystem::Advance(double RealDeltaSeconds)
 		return;
 	}
 
-	// Fixed-step deterministic advancement:
+	// Fixed-step deterministic advancement.
+	//
+	// TASK GRAPH NOTE: OnSimTimeAdvanced subscribers (SolarSystemSubsystem, UniversalSkyActor, etc.)
+	// currently run synchronously here on the game thread. If per-step work becomes expensive,
+	// each broadcast could dispatch a UE::Tasks::Launch task instead, with a join before the
+	// next physics tick. Keep subscriber work cheap until that becomes necessary.
 	Accumulator += ScaledDelta;
 
-	// Handle negative time scale (rewind) if allowed:
+	// Guard against spiral-of-death: cap steps per frame to prevent cascade
+	// when frame time spikes (e.g. loading, debugging, editor stalls).
+	static constexpr int32 MaxStepsPerFrame = 8;
+	int32 StepCount = 0;
+
 	if (Accumulator >= 0.0)
 	{
-		while (Accumulator >= FixedStepSeconds)
+		while (Accumulator >= FixedStepSeconds && StepCount < MaxStepsPerFrame)
 		{
 			SimTimeSeconds += FixedStepSeconds;
 			Accumulator -= FixedStepSeconds;
 			LastStepSeconds = FixedStepSeconds;
 			OnSimTimeAdvanced.Broadcast(SimTimeSeconds);
+			++StepCount;
+		}
+		// If capped, discard excess accumulation to prevent deferred catch-up.
+		if (StepCount == MaxStepsPerFrame)
+		{
+			Accumulator = 0.0;
 		}
 	}
 	else
 	{
-		while (Accumulator <= -FixedStepSeconds)
+		while (Accumulator <= -FixedStepSeconds && StepCount < MaxStepsPerFrame)
 		{
 			SimTimeSeconds -= FixedStepSeconds;
 			Accumulator += FixedStepSeconds;
 			LastStepSeconds = -FixedStepSeconds;
 			OnSimTimeAdvanced.Broadcast(SimTimeSeconds);
+			++StepCount;
+		}
+		if (StepCount == MaxStepsPerFrame)
+		{
+			Accumulator = 0.0;
 		}
 	}
 }
