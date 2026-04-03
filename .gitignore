@@ -18,6 +18,10 @@ Script/
 # Visual Studio Code
 .vscode/
 .vsconfig
+
+# Clangd - build-generated, machine-specific (regenerate with Scripts/gen_clang_db.bat)
+compile_commands.json
+.cache/
 .idea/
 .vs/
 *.code-workspace
