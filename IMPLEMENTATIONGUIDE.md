@@ -304,6 +304,224 @@ double AltitudeKm = Frame->GetAltitude(ActorLocation);
 
 ---
 
+## Setting Up Atmospheric Rendering
+
+### UniversalSkyActor - Manager Pattern
+
+**CRITICAL ARCHITECTURE NOTE:** UniversalSkyActor is a **manager**, not a "God Actor". It coordinates separately-placed atmospheric actors via references.
+
+#### Why This Matters
+
+UE5's atmospheric rendering pipeline expects:
+- One `ASkyAtmosphere` actor (with `USkyAtmosphereComponent`)
+- One `ADirectionalLight` actor (with `UDirectionalLightComponent`)
+- One `ASkyLight` actor (with `USkyLightComponent`)
+
+Each component type has different registration mechanisms. The engine queries them separately via `GetWorld()->GetFirstXXX()` patterns.
+
+**WRONG APPROACH** (Old "God Actor" pattern):
+```cpp
+// ❌ DON'T: Create owned components in one actor
+SunLight = CreateDefaultSubobject<UDirectionalLightComponent>(TEXT("Sun"));
+SkyAtmosphere = CreateDefaultSubobject<USkyAtmosphereComponent>(TEXT("Atmosphere"));
+// This breaks UE5's atmospheric rendering pipeline!
+```
+
+**CORRECT APPROACH** (Manager pattern):
+```cpp
+// ✅ DO: Reference separately-placed actors
+UPROPERTY(EditAnywhere)
+ADirectionalLight* SunLightActor;  // Reference, not owned
+
+UPROPERTY(EditAnywhere)
+ASkyAtmosphere* SkyAtmosphereActor;  // Reference, not owned
+```
+
+#### Setup Workflow
+
+**Step 1: Place Environment Light Mixer Actors**
+
+In your level, place these actors from the Place Actors panel:
+
+1. **Sky Atmosphere**
+   - Drag `SkyAtmosphere` actor into level
+   - Configure: 
+     - Bottom Radius: `6360.0` km (Earth radius)
+     - Atmosphere Height: `100.0` km
+     - Leave other settings at defaults
+
+2. **Directional Light (Sun)**
+   - Drag `DirectionalLight` actor into level
+   - Configure:
+     - Mobility: **Movable** (CRITICAL for dynamic lighting)
+     - Atmosphere Sun Light: **Enabled**
+     - Atmosphere Sun Light Index: `0`
+     - Cast Shadows: **Enabled**
+     - Light Color: White
+     - Intensity: `50000` lux (will be driven by subsystems)
+
+3. **Sky Light**
+   - Drag `SkyLight` actor into level
+   - Configure:
+     - Mobility: **Movable**
+     - Real Time Capture: **Enabled** (CRITICAL for dynamic updates)
+     - Source Type: **Captured Scene**
+     - Intensity: `1.0` (will be modulated by subsystems)
+
+4. **[Optional] Volumetric Cloud**
+   - Drag `VolumetricCloud` actor for weather effects
+   - Assign cloud material
+
+5. **[Optional] Exponential Height Fog**
+   - Place for atmospheric haze
+   - Set initial density low (0.002)
+
+6. **[Optional] Post Process Volume**
+   - For exposure and color grading
+   - Set `Unbound: true` for global effect
+
+**Step 2: Place UniversalSkyActor**
+
+1. Place `AUniversalSkyActor` in your level
+2. Select it in the World Outliner
+3. In Details panel, under **Sky|References**, assign:
+   - **Sky Atmosphere Actor** → your placed SkyAtmosphere
+   - **Sun Light Actor** → your placed DirectionalLight  
+   - **Sky Light Actor** → your placed SkyLight
+   - [Optional] **Volumetric Cloud Actor** → your cloud actor
+   - [Optional] **Height Fog Actor** → your fog actor
+   - [Optional] **Post Process Volume** → your PP volume
+
+**Step 3: Configure Starfield (Optional)**
+
+If you want procedural star rendering:
+
+1. Ensure you have the Niagara System: `/Game/SpecPacks/Space/NS_StarField`
+2. In UniversalSkyActor Details:
+   - **Starfield Niagara System**: Assign `NS_StarField`
+   - **Star Sphere Radius Cm**: `1000000` (10km render distance)
+   - **Max Visible Magnitude**: `6.0` (naked eye limit)
+
+**Step 4: Verify Setup**
+
+Hit Play and check Output Log:
+
+```
+✅ UniversalSkyActor: All required actor references assigned
+☀️ SUN DIAGNOSTICS: Direction=(0.5, 0.3, 0.8), Intensity=50000 lux
+🌤️ SKYLIGHT: RealTimeCapture=true, Active=true
+🌍 ATMOSPHERE: BottomRadius=6360 km, Active=true
+⭐ STARFIELD: Configured, SphereRadius=1000000 cm
+```
+
+#### Data Flow
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    SUBSYSTEM LAYER                          │
+│  SolarSystemSubsystem  EnvironmentSubsystem  TimeSubsystem  │
+└─────────────────┬───────────────────────────────────────────┘
+                  │ Queries (sun direction, atmosphere, time)
+                  ▼
+┌─────────────────────────────────────────────────────────────┐
+│              UNIVERSALSKYACTOR (MANAGER)                    │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │  Tick():                                            │   │
+│  │  1. Query SolarSystemSubsystem for sun direction   │   │
+│  │  2. Query EnvironmentSubsystem for atmosphere      │   │
+│  │  3. Process queries → render parameters            │   │
+│  │  4. Update referenced actors                       │   │
+│  └─────────────────────────────────────────────────────┘   │
+└─────┬─────┬────────┬──────────┬──────────┬─────────────────┘
+      │     │        │          │          │
+      │     │        │          │          │ SetIntensity()
+      │     │        │          │          │ SetRotation()
+      ▼     ▼        ▼          ▼          ▼
+   ☀️Sun  🌍Atmos  🌤️Sky   ☁️Clouds   🌫️Fog
+   Light  phere   Light    
+```
+
+#### Runtime Updates
+
+UniversalSkyActor automatically updates atmospheric actors when:
+
+1. **Time changes** (via `TimeSubsystem::OnTimeAdvanced` delegate)
+2. **Environment changes** (when `ApplyEnvironment()` called)
+3. **Weather changes** (when `FRuntimeWeatherState` updated)
+
+You don't need to manually call update methods - subsystems handle it.
+
+#### Manual Control (Advanced)
+
+If you need manual control:
+
+```cpp
+// Get the manager
+AUniversalSkyActor* SkyManager = /* find in level */;
+
+// Define environment
+FRuntimeMediumSpec EarthAtmo;
+EarthAtmo.Density = 1.225f;  // kg/m³
+EarthAtmo.PressurePa = 101325.0f;
+EarthAtmo.TemperatureK = 288.15f;
+EarthAtmo.SolarIrradiance_Wm2 = 1361.0f;
+
+// Define weather
+FRuntimeWeatherState ClearDay;
+ClearDay.CloudCover01 = 0.2f;  // 20% cloud cover
+ClearDay.Fog01 = 0.1f;         // Light fog
+ClearDay.WindSpeed = 5.0f;     // 5 m/s wind
+
+// Apply
+SkyManager->ApplyEnvironment(EarthAtmo, ClearDay);
+```
+
+#### Component Access
+
+Get components safely via getters:
+
+```cpp
+// Get sun light component
+UDirectionalLightComponent* SunLight = SkyManager->GetSunLightComponent();
+if (SunLight)
+{
+    // Modify sun properties
+    SunLight->SetIntensity(75000.0f);
+}
+
+// Get atmosphere component
+USkyAtmosphereComponent* Atmosphere = SkyManager->GetSkyAtmosphereComponent();
+if (Atmosphere)
+{
+    // Modify atmosphere
+    Atmosphere->SetRayleighScatteringScale(0.05f);
+}
+```
+
+#### Troubleshooting
+
+**Sun not visible:**
+- Verify SunLightActor is assigned in UniversalSkyActor
+- Check DirectionalLight mobility is Movable
+- Ensure Atmosphere Sun Light is enabled
+
+**Sky is black:**
+- Verify SkyAtmosphereActor is assigned
+- Check atmosphere component is visible and active
+- Ensure camera is above atmosphere bottom radius
+
+**Stars not rendering:**
+- Check StarfieldNiagaraSystem is assigned
+- Verify Niagara system asset exists at path
+- Check Output Log for starfield initialization messages
+
+**Lighting not updating:**
+- Verify Real Time Capture is enabled on SkyLight
+- Check TimeSubsystem subscription in Output Log
+- Ensure SkyLightActor reference is assigned
+
+---
+
 ## Implementing Persistence
 
 ### Using FileDeltaStore (Single-Player)

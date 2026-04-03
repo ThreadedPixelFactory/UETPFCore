@@ -167,6 +167,230 @@ float Friction = State.Spec->Friction;
 
 **Usage**: Drive sky rendering, time of day, tides
 
+---
+
+## Atmospheric Rendering Architecture
+
+### UniversalSkyActor - Manager Pattern
+
+**Design Philosophy**: UniversalSkyActor is a **data-driven manager**, not a component owner.
+
+#### Architecture Rationale
+
+UE5's atmospheric rendering pipeline has specific architectural requirements:
+
+1. **Component Registration**: Each atmospheric component type (`USkyAtmosphereComponent`, `UDirectionalLightComponent`, `USkyLightComponent`) registers independently with the rendering system
+2. **Singleton Queries**: The engine queries for "first of type" via `GetWorld()->GetFirstXXX()` patterns
+3. **Separate Update Paths**: Each component has its own update mechanisms and render thread synchronization
+
+**Anti-Pattern: "God Actor"** (Previous approach - DEPRECATED):
+```cpp
+// ❌ Owned components in one actor breaks rendering pipeline
+class AUniversalSkyActor : public AActor {
+    UDirectionalLightComponent* SunLight;      // Owned
+    USkyAtmosphereComponent* SkyAtmosphere;     // Owned  
+    USkyLightComponent* SkyLight;               // Owned
+};
+// Problems:
+// - Breaks UE5's component registration
+// - Interferes with atmospheric scattering queries
+// - Prevents proper Lumen GI updates
+```
+
+**Correct Pattern: Manager with References** (Current approach):
+```cpp
+// ✅ References to separately-placed actors
+class AUniversalSkyActor : public AActor {
+    UPROPERTY(EditAnywhere)
+    ADirectionalLight* SunLightActor;       // Reference (not owned)
+    
+    UPROPERTY(EditAnywhere)
+    ASkyAtmosphere* SkyAtmosphereActor;     // Reference (not owned)
+    
+    UPROPERTY(EditAnywhere)
+    ASkyLight* SkyLightActor;               // Reference (not owned)
+};
+// Benefits:
+// - Respects UE5 rendering architecture
+// - Each actor registers independently
+// - Proper Lumen GI integration
+// - Manager only updates properties
+```
+
+#### Data Flow Architecture
+
+```
+┌───────────────────────────────────────────────────────────┐
+│                    SUBSYSTEM LAYER                        │
+│  ┌───────────────┐  ┌────────────────┐  ┌───────────────┐ │
+│  │ SolarSystem   │  │  Environment   │  │     Time      │ │
+│  │  Subsystem    │  │   Subsystem    │  │  Subsystem    │ │
+│  └───────┬───────┘  └────────┬───────┘  └───────┬───────┘ │
+│          │ Sun Direction     │ Atmosphere       │ Events  │
+│          │                   │ Properties       │         │
+└──────────┼───────────────────┼──────────────────┼─────────┘
+           │                   │                  │
+           │                   │                  │ OnTimeAdvanced
+           │                   │                  ▼
+┌──────────▼───────────────────▼───────────────────────────────┐
+│              UNIVERSALSKYACTOR (MANAGER)                     │
+│  ┌─────────────────────────────────────────────────────────┐ │
+│  │  Tick() / Event-Driven Updates:                         │ │
+│  │  1. Query SolarSystemSubsystem → sun direction          │ │
+│  │  2. Query EnvironmentSubsystem → atmosphere properties  │ │
+│  │  3. Process → render parameters (intensity, color)      │ │
+│  │  4. Call component setters on referenced actors         │ │
+│  └─────────────────────────────────────────────────────────┘ │
+│                                                              │
+│  Component Getters (safe reference access):                  │
+│  - GetSunLightComponent() → DirectionalLightComponent        │
+│  - GetSkyAtmosphereComponent() → SkyAtmosphereComponent      │
+│  - GetSkyLightComponent() → SkyLightComponent                │
+└───────┬──────┬──────────┬──────────┬──────────┬──────────────┘
+        │      │          │          │          │
+        │  Setters        │          │          │
+        │  SetIntensity() │          │          │
+        │  SetRotation()  │          │          │
+        ▼      ▼          ▼          ▼          ▼
+┌────────────────────────────────────────────────────────────┐
+│           SEPARATELY PLACED ACTORS (LEVEL)                 │
+│  ┌────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐      │
+│  │☀️Sun   │ │ 🌍Atmos  │  │🌤️Sky     │ │ ☁️Clouds │      │
+│  │Light   │  │phere     │  │Light     │  │          │      │
+│  │Actor   │  │Actor     │  │Actor     │  │Actor     │      │
+│  └────────┘  └──────────┘  └──────────┘  └──────────┘      │
+│  (Component) (Component)  (Component)   (Component)        │
+│  registers → UE5 Rendering System                          │
+└────────────────────────────────────────────────────────────┘
+```
+
+#### Update Mechanisms
+
+**Event-Driven (Primary)**:
+```cpp
+// TimeSubsystem broadcasts time changes
+TimeSubsystem->OnSimTimeAdvanced.Broadcast(NewTime);
+    ↓
+UniversalSkyActor::OnTimeAdvanced(double Time)
+    ↓
+ApplyEnvironment(CurrentMedium, CurrentWeather)
+    ↓
+ApplySun() / ApplyAtmosphere() / ApplySkyLight()
+    ↓
+Component Setters (SetIntensity, SetRotation, SetScattering)
+```
+
+**Tick-Based (Starfield Only)**:
+```cpp
+// Only starfield rotation updates in Tick (lightweight)
+UniversalSkyActor::Tick(DeltaSeconds)
+    ↓
+UpdateStarfieldRotation()  // GMST-based star rotation
+    ↓
+NiagaraComponent->SetVariableFloat("User_RotationAngle")
+```
+
+#### Component Access Pattern
+
+Safe component getter pattern with nullptr checks:
+
+```cpp
+void AUniversalSkyActor::ApplySun(const FRuntimeMediumSpec& Medium, ...)
+{
+    // Get component via actor reference
+    UDirectionalLightComponent* SunLight = GetSunLightComponent();
+    
+    // Silent return if actor not assigned (no error spam)
+    if (!SunLight) { return; }
+    
+    // Safe to use component
+    SunLight->SetIntensity(CalculatedIntensity);
+    SunLight->SetWorldRotation(CalculatedRotation);
+}
+```
+
+**Why Silent Failure?**
+- Users may intentionally not use certain atmospheric features (e.g., no sun for underground levels)
+- Reduces log spam during development
+- Manager gracefully handles partial setup
+
+#### Owned vs Referenced Components
+
+| Component | Ownership | Reason |
+|-----------|-----------|--------|
+| DirectionalLight | Referenced | Must register independently for atmosphere |
+| SkyAtmosphere | Referenced | Queries separate from actor hierarchy |
+| SkyLight | Referenced | Capture system requires actor-level registration |
+| VolumetricCloud | Referenced | Material-driven, needs separate actor |
+| ExponentialHeightFog | Referenced | Global fog queries by type |
+| PostProcessVolume | Referenced | Spatial blending requires volume actor |
+| NiagaraStarfield | **Owned** | Purely visual, no engine queries |
+
+#### Integration Points
+
+**With SolarSystemSubsystem**:
+```cpp
+FSolarSystemState SolarState = SolarSys->GetSolarSystemState();
+FVector SunDir = SolarState.SunDir_World;
+float SunIlluminance = SolarState.SunIlluminanceLux;
+
+// Apply to DirectionalLight via reference
+GetSunLightComponent()->SetWorldRotation(MakeRotFromX(-SunDir));
+GetSunLightComponent()->SetIntensity(SunIlluminance * CloudDim);
+```
+
+**With EnvironmentSubsystem**:
+```cpp
+FRuntimeMediumSpec Medium = EnvSubsystem->GetMediumSpec("Earth");
+
+// Convert density → scattering coefficients
+float Density01 = FMath::Clamp(Medium.Density / 1.225f, 0.0f, 1.0f);
+float AtmosStrength = Density01 * 0.3f;
+
+// Apply to SkyAtmosphere via reference
+GetSkyAtmosphereComponent()->SetRayleighScatteringScale(AtmosStrength);
+GetSkyAtmosphereComponent()->SetMieScatteringScale(AtmosStrength * Humidity01);
+```
+
+**With TimeSubsystem**:
+```cpp
+// Subscribe to time changes (BeginPlay)
+TimeSubsystem->OnSimTimeAdvanced.AddUObject(this, &AUniversalSkyActor::OnTimeAdvanced);
+
+// Event callback
+void AUniversalSkyActor::OnTimeAdvanced(double NewTime) {
+    ApplyEnvironment(CurrentMedium, CurrentWeather);
+}
+```
+
+#### Usage Workflow (Level Setup)
+
+1. **Place Environment Light Mixer Components**:
+   - Place `SkyAtmosphere` actor
+   - Place `DirectionalLight` actor (set Mobility: Movable)
+   - Place `SkyLight` actor (set Real Time Capture: Enabled)
+   - [Optional] Place `VolumetricCloud`, `ExponentialHeightFog`, `PostProcessVolume`
+
+2. **Place UniversalSkyActor**:
+   - Drag into level
+
+3. **Assign References**:
+   - Select UniversalSkyActor
+   - In Details panel, under **Sky|References**, assign all placed actors
+
+4. **Verify**:
+   - Hit Play
+   - Check Output Log for: `✅ UniversalSkyActor: All required actor references assigned`
+
+#### Performance Characteristics
+
+- **Memory**: Minimal overhead (only actor references)
+- **CPU**: Updates only on environment/time changes (event-driven)
+- **Starfield**: GPU-compute Niagara system (5000+ stars)
+- **Subsystem Queries**: Amortized across all managers
+
+---
+
 ## Data Asset Types
 
 ### SpecTypes (UETPFCore/Public/SpecTypes.h)
