@@ -45,7 +45,7 @@ What actually happens
 
 **Environment:**
 - OS: Windows 10/11
-- UE Version: 5.7.x
+- UE Version: 5.8.x
 - Commit/Version: abc123
 
 **Logs:**

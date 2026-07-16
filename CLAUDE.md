@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-UETPFCore is a multi-scale simulation framework for Unreal Engine 5.7, implementing a subsystem-based architecture for physics-driven world simulation. It targets space exploration, planetary surface games, and multi-scale simulations.
+UETPFCore is a multi-scale simulation framework for Unreal Engine 5.8, implementing a subsystem-based architecture for physics-driven world simulation. It targets space exploration, planetary surface games, and multi-scale simulations.
 
-**Engine**: Unreal Engine 5.7
+**Engine**: Unreal Engine 5.8
 **Platform**: Windows (primary)
 **License**: Apache 2.0
 
@@ -285,6 +285,8 @@ Critical plugins enabled in UETPFCore.uproject:
 - [IMPLEMENTATIONGUIDE.md](docs/IMPLEMENTATIONGUIDE.md): Integration patterns, setup workflows
 - [SETUP.md](docs/SETUP.md): Build setup, troubleshooting
 - [threading-guidelines.md](docs/threading-guidelines.md): UE5 threading systems reference
+- [GAMEDEV-GUIDE.md](docs/GAMEDEV-GUIDE.md): Building games on the simulation systems
+- [.claude/skills/](.claude/skills/README.md): Ordered skills library (onboarding, Unreal MCP, conventions, branching, UE 5.8 toolset)
 - [README.md](README.md): Project overview, use cases
 
 ## Performance Guidelines

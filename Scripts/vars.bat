@@ -14,7 +14,7 @@ set PROJECT_DIR=%~dp0..
 set PROJECT_FILE=%PROJECT_DIR%\%PROJECT_NAME%.uproject
 
 REM --- Engine Settings --- Update location based on your installation
-set ENGINE_VERSION=5.7
+set ENGINE_VERSION=5.8
 set ENGINE_ROOT=C:\Program Files\Epic Games\UE_%ENGINE_VERSION%
 
 REM --- Engine Paths ---

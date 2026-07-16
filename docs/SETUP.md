@@ -8,7 +8,7 @@ Licensed under the Apache License, Version 2.0. See LICENSE.txt in the project r
 ## Prerequisites
 
 ### Required Software
-- **Unreal Engine 5.7** (from Epic Games Launcher)
+- **Unreal Engine 5.8** (from Epic Games Launcher)
 - **Visual Studio 2022** (Community, Professional, or Enterprise)
   - Workload: "Game development with C++"
   - Include: "Unreal Engine installer"
@@ -35,7 +35,7 @@ with your project information
 ### 2. Generate Project Files
 
 Right-click on `UETPFCore.uproject` and select:
-- "Switch Unreal Engine version..." → Select 5.7
+- "Switch Unreal Engine version..." → Select 5.8
 - "Generate Visual Studio project files"
 
 This creates `UETPFCore.sln`.
@@ -105,7 +105,7 @@ After launching the editor, verify the installation:
 
 ### Compilation Errors
 - Ensure Visual Studio has "Game development with C++" workload
-- Verify Unreal Engine 5.7 is correctly installed
+- Verify Unreal Engine 5.8 is correctly installed
 - Check Engine path in `Scripts/vars.bat`
 
 ### Editor Crashes on Launch

@@ -137,3 +137,9 @@ Documentation/latex/
 # -----------------------------------------------------------------------------
 # Don't ignore the .gitattributes file
 !.gitattributes
+
+# -----------------------------------------------------------------------------
+# Optional Unreal MCP (UE 5.8) - client config generated per-machine via
+# `ModelContextProtocol.GenerateClientConfig <Agent>` in the editor console
+# -----------------------------------------------------------------------------
+.mcp.json

@@ -5,9 +5,9 @@ Licensed under the Apache License, Version 2.0. See LICENSE.txt in the project r
 
 # UETPFCore - Unreal Engine Threaded Physics Factory Core
 
-## A Multi-Scale Simulation Framework for Unreal Engine 5.7
+## A Multi-Scale Simulation Framework for Unreal Engine 5.8
 
-UETPFCore is an Apache 2.0-licensed forward looking framework leveraging experimental engine features and aims to become a simple production-ready, framework for building physics-driven programs and scientific simulations in Unreal Engine 5.7+.
+UETPFCore is an Apache 2.0-licensed forward looking framework leveraging experimental engine features and aims to become a simple production-ready, framework for building physics-driven programs and scientific simulations in Unreal Engine 5.8+.
 
 It provides cognitive structure for projects with a robust **ready-to-build** subsystem architecture inside a minimal project aimed at high fidelity multi-scale simulations, supporting everything from planetary-scale coordinate systems down to centimeter-precision physics interactions.
 
@@ -49,7 +49,7 @@ It provides cognitive structure for projects with a robust **ready-to-build** su
 ## Quick Start
 
 ### Prerequisites
-- Unreal Engine 5.7
+- Unreal Engine 5.8
 - Windows (primary support)
 - Visual Studio 2022 or later
 
@@ -85,6 +85,7 @@ Template module demonstrating single-player game patterns:
 - **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** - System architecture deep dive
 - **[IMPLEMENTATIONGUIDE.md](docs/IMPLEMENTATIONGUIDE.md)** - Integration guide for your game
 - **[threading-guidelines.md](docs/threading-guidelines.md)** - UE5 threading reference
+- **[GAMEDEV-GUIDE.md](docs/GAMEDEV-GUIDE.md)** - Building games on the simulation systems
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** - Contribution guidelines
 
 ## Example Content (coming soon)
@@ -148,7 +149,7 @@ Monthly or one-time support helps us maintain and improve this framework:
 ## Acknowledgments
 
 Built with:
-- Unreal Engine 5.7 by Epic Games
+- Unreal Engine 5.8 by Epic Games
 - Chaos Physics System
 - World Partition streaming
 - PCG (Procedural Content Generation)

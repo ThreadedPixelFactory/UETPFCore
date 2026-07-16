@@ -29,7 +29,7 @@ resolves the path using those flags and indexes the engine header in place.
 ## Prerequisites
 
 - Visual Studio 2022 with **Desktop development with C++** workload
-- Unreal Engine 5.7 installed
+- Unreal Engine 5.8 installed
 - VS Code with the [clangd extension](https://marketplace.visualstudio.com/items?itemName=llvm-vs-code-extensions.vscode-clangd)
 - Project must compile successfully before generating the database
 

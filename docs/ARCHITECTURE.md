@@ -7,7 +7,7 @@ Licensed under the Apache License, Version 2.0. See LICENSE.txt in the project r
 
 ## Overview
 
-UETPFCore implements a **subsystem-based architecture** for physics-driven world simulation in Unreal Engine 5.7. The design emphasizes engineering best practices in modularity, data-driven configuration, and clean separation of concerns.
+UETPFCore implements a **subsystem-based architecture** for physics-driven world simulation in Unreal Engine 5.8. The design emphasizes engineering best practices in modularity, data-driven configuration, and clean separation of concerns.
 
 ## Core Architectural Principles
 

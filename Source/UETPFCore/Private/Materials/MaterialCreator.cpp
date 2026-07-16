@@ -167,15 +167,10 @@ void UMaterialCreator::ConfigureNiagaraMaterialSettings(UMaterial* Material)
 	Material->TwoSided = true;
 
 	// CRITICAL: Enable Niagara sprite usage flag BEFORE adding expressions
-	// This ensures the flag is included in the initial material compile
-	bool bNeedsRecompile = false;
-	Material->SetMaterialUsage(bNeedsRecompile, MATUSAGE_NiagaraSprites);
-	
-	// Force immediate recompile if needed
-	if (bNeedsRecompile)
-	{
-		Material->ForceRecompileForRendering();
-	}
+	// This ensures the flag is included in the initial material compile.
+	// SetMaterialUsage recompiles internally (via its own FMaterialUpdateContext)
+	// when it needs to set the flag, so no follow-up ForceRecompileForRendering call is needed.
+	const bool bUsageValid = Material->SetMaterialUsage(MATUSAGE_NiagaraSprites);
 
-	UE_LOG(LogTemp, Warning, TEXT("MaterialCreator: Niagara usage set, NeedsRecompile=%d"), bNeedsRecompile);
+	UE_LOG(LogTemp, Warning, TEXT("MaterialCreator: Niagara usage set, UsageValid=%d"), bUsageValid);
 }

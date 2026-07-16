@@ -1,8 +1,8 @@
 {
 	"FileVersion": 3,
-	"EngineAssociation": "5.7",
+	"EngineAssociation": "5.8",
 	"Category": "Template",
-	"Description": "Production-ready multi-scale simulation framework for Unreal Engine 5.7 projects. Provides physics-driven world simulation, multi-scale coordinate systems, subsystem architecture, and delta persistence for single-player story-driven games.",
+	"Description": "Production-ready multi-scale simulation framework for Unreal Engine 5.8 projects. Provides physics-driven world simulation, multi-scale coordinate systems, subsystem architecture, and delta persistence for single-player story-driven games.",
 	"Modules": [
 		{
 			"Name": "UETPFCore",

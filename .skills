@@ -1,5 +1,10 @@
 # UETPFCore Project Skills
 
+> **Note**: This file is quick-reference. There is a partitioned skills
+> library now in [.claude/skills/](.claude/skills/README.md)
+> with ordered skills covering onboarding, Unreal MCP (UE 5.8), simulation
+> conventions, and branch workflow.
+
 ## Critical Architecture Patterns
 
 ### UniversalSkyActor: Manager Pattern (NOT Component Owner)
