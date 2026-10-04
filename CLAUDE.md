@@ -136,8 +136,8 @@ Two coordinate frames with seamless transformations:
 
 Use `UWorldFrameSubsystem` for conversions:
 ```cpp
-FVector WorldPos = Frame->CanonicalToWorld(KmPosition);
-FVector CanonicalKm = Frame->WorldToCanonical(WorldPos);
+FVector WorldPosCm = Frame->CanonicalKmToWorldCm(KmPosition);
+FVector CanonicalKm = Frame->WorldCmToCanonicalKm(WorldPosCm);
 ```
 
 **NEVER** manually convert with `* 100000.0` - this misses frame offsets.
@@ -235,7 +235,7 @@ void AYourGameMode::InitGame(const FString& MapName, const FString& Options, FSt
 ### Coordinate Conversion (DO)
 ```cpp
 UWorldFrameSubsystem* Frame = GetWorld()->GetSubsystem<UWorldFrameSubsystem>();
-FVector WorldPos = Frame->CanonicalToWorld(KmPosition);  // Correct
+FVector WorldPosCm = Frame->CanonicalKmToWorldCm(KmPosition);  // Correct
 ```
 
 ### Anti-Patterns (DON'T)

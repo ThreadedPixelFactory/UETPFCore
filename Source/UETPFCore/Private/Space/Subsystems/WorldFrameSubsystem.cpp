@@ -29,10 +29,16 @@ FVector UWorldFrameSubsystem::CanonicalKmToWorldCm(const FVector& CanonicalPosKm
     if (!Solar) return FVector::ZeroVector;
 
     const FVector AnchorKm = Solar->GetBodyState(AnchorBody).PositionKm;
-    const FVector RelKm = CanonicalPosKm - AnchorKm; // anchor at world origin
-    const FVector RelCm = RelKm * KmToCm;
+    return (CanonicalPosKm - AnchorKm) * KmToCm;
+}
 
-    return FVector((float)RelCm.X, (float)RelCm.Y, (float)RelCm.Z);
+FVector UWorldFrameSubsystem::WorldCmToCanonicalKm(const FVector& WorldPosCm) const
+{
+    USolarSystemSubsystem* Solar = GetSolar();
+    if (!Solar) return FVector::ZeroVector;
+
+    const FVector AnchorKm = Solar->GetBodyState(AnchorBody).PositionKm;
+    return WorldPosCm / KmToCm + AnchorKm;
 }
 
 FVector UWorldFrameSubsystem::GetMoonWorldCm() const

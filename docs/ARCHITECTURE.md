@@ -85,19 +85,21 @@ double SimTime = Time->GetSimulationTime();
 **Scope**: World  
 **Purpose**: Multi-scale coordinate transformation
 
-- Manages current coordinate frame (which body we're orbiting)
-- km ↔ cm transformations
-- Gravity direction and magnitude
-- Altitude calculations
+- Holds the world's anchor body (Earth, Moon, spacecraft), set once per level via `SetAnchorBody`
+- km ↔ cm transformations relative to that anchor
+- Builds the sky context for the anchor (sun direction, atmosphere/cloud flags, moon phase)
+- *(Planned)* Gravity direction and magnitude derived from the anchor body. Today gravity is a constant vector on the medium spec, served by EnvironmentSubsystem
+- *(Planned)* Altitude calculations relative to the anchor body. Today altitude is world Z above sea level in GlobalAtmosphereField
 
 **Key Concepts**:
 - **Canonical Frame**: km-scale coordinates (physics truth)
-- **UE World Frame**: cm-scale coordinates (rendering/gameplay)
+- **UE World Frame**: cm-scale coordinates (rendering/gameplay), anchor body at origin
 
 **Usage**:
 ```cpp
 UWorldFrameSubsystem* Frame = GetWorld()->GetSubsystem<UWorldFrameSubsystem>();
-FVector WorldPos = Frame->CanonicalToWorld(KmPosition);
+FVector WorldPosCm = Frame->CanonicalKmToWorldCm(KmPosition);
+FVector CanonicalKm = Frame->WorldCmToCanonicalKm(WorldPosCm);
 ```
 
 ### EnvironmentSubsystem
@@ -515,19 +517,72 @@ Storage (JSON files, database, network packets)
 ### UE World Frame (cm-scale)
 - Standard Unreal coordinates
 - Rendering, gameplay, physics
-- Large World Coordinates (LWC) enabled
-- Single-precision at local scale
+- Large World Coordinates (LWC): `FVector` is double precision
+- Origin is the anchor body's center, fixed for the lifetime of the level
 
 ### Transformation
 ```cpp
 // Canonical (km) → World (cm)
-FVector WorldPos = CanonicalKm * 100000.0;  // km to cm
+WorldPosCm = (CanonicalKm - AnchorKm) * 100000.0;   // UWorldFrameSubsystem::CanonicalKmToWorldCm
 
 // World (cm) → Canonical (km)
-FVector CanonicalKm = WorldPos / 100000.0;  // cm to km
+CanonicalKm = WorldPosCm / 100000.0 + AnchorKm;     // UWorldFrameSubsystem::WorldCmToCanonicalKm
 ```
 
-Use `WorldFrameSubsystem` for proper transformations accounting for frame offsets.
+Always call the `WorldFrameSubsystem` functions; a bare `* 100000.0` drops the anchor offset. Both stay in double precision end to end.
+
+Never narrow a converted position to `float`. A float holds about 7 significant digits, so at the Moon's distance from an Earth anchor (3.8e10 cm) it can only represent positions about 41 m apart, and at low Earth orbit (6.8e8 cm) about 64 cm apart.
+
+### Why Two Frames When UE Has LWC
+
+LWC makes `FVector` double, and the engine already renders relative to the camera, so gameplay, rendering and Chaos stay precise across the whole world. LWC does have a range: `UE_LARGE_WORLD_MAX` (`EngineDefines.h`) allows about 44 million km from the origin.
+
+| Distance from an Earth anchor | Fits in the UE world? |
+|---|---|
+| Moon, about 384,400 km | Yes |
+| Mars at its closest, about 55 million km | No |
+| Sun, about 150 million km | No |
+
+The **canonical frame** is the source of truth. It holds every body's true position in km doubles; even at the Sun's distance a double resolves to a few centimetres. The **world frame** is a window onto it, centered on the anchor body. Bodies inside the window are placed as actors with `CanonicalKmToWorldCm`. Bodies outside it are shown as directions, not positions (for example `FSkyContext::SunDirWorld`).
+
+Changing the anchor changes where the window is centered. Today that happens once per level, and `UInterplanetaryTravelSubsystem` loads a different level with a different anchor.
+
+### Floating Origin: When a Project Needs It
+
+A floating origin moves the origin to follow the camera, so the numbers near the player stay small. There are two kinds.
+
+**Engine origin rebasing** (`UWorld::SetNewWorldOrigin`) was UE4's answer for large open worlds. Under UE5 it isn't needed for gameplay, rendering or physics, and World Partition doesn't support it. Don't use it in this framework.
+
+**Per-solver local frames** are still useful. LWC only protects double-precision code paths. Code that does its own math in `float` loses precision far from the origin, no matter what LWC does. That includes:
+- CPU solvers that store `float` positions or fields
+- Niagara and other GPU simulations
+- material and shader math (world position offset, procedural noise)
+- anything packed into `FVector3f` for bandwidth or SIMD
+
+For those systems, add a third tier under the two frames above:
+
+```
+Canonical (km, double)
+  -> World (cm, double, LWC; anchor body at origin)
+    -> Local frame (float; origin owned by the solver)
+```
+
+Sketch of the extension to `UWorldFrameSubsystem`:
+
+```cpp
+FLocalFrameHandle RegisterLocalFrame(FName Name, const FVector& OriginWorldCm);
+FVector3f WorldToLocal(FLocalFrameHandle Frame, const FVector& WorldPosCm) const;
+FVector   LocalToWorld(FLocalFrameHandle Frame, const FVector3f& LocalPos) const;
+void      RecenterLocalFrame(FLocalFrameHandle Frame, const FVector& NewOriginWorldCm);
+FOnLocalFrameShifted OnLocalFrameShifted;  // (Handle, DeltaCm)
+```
+
+Design rules:
+- **Recenter on a distance threshold, not every frame.** Recentering moves the frame's origin and broadcasts `OnLocalFrameShifted`, so systems holding local positions can update.
+- **Each solver is sized to its own domain.** Its cost depends on its own extent, not on how big the world is. Solvers far from the player can be paused or run at lower resolution based on distance from their frame. This keeps simulation cost bounded as the world grows.
+- **Never save or send local coordinates.** Deltas are keyed in canonical km or World Partition cell coordinates. Network state is sent in canonical or world coordinates. Each machine keeps its own local frames.
+
+A related extension is changing `AnchorBody` while the game runs, for example a seamless Earth-to-orbit-to-Moon trip without a level load. That breaks today's assumption that the anchor is set once per level. It would need an `OnAnchorChanged` event, and anything that caches converted world positions would have to convert them again.
 
 ## Threading Model
 

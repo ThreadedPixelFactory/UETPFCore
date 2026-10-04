@@ -38,7 +38,8 @@ of a spec is a design bug even when the number is right.
 
 ```cpp
 UWorldFrameSubsystem* Frame = GetWorld()->GetSubsystem<UWorldFrameSubsystem>();
-FVector WorldPos = Frame->CanonicalToWorld(KmPosition);
+FVector WorldPosCm = Frame->CanonicalKmToWorldCm(KmPosition);
+FVector CanonicalKm = Frame->WorldCmToCanonicalKm(WorldPosCm);
 ```
 
 `* 100000.0` by hand misses the frame offset and produces bugs that only

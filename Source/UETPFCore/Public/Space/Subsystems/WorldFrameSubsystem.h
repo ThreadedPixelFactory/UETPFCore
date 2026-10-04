@@ -20,8 +20,9 @@
  * Canonical Frame (km):    Solar system, Earth at origin
  * World Frame (cm):        UE world space, Anchor body at origin
  * 
- * Transform:
- *   WorldPos_cm = (CanonicalPos_km - AnchorPos_km) * 100000.0
+ * Transform (double precision end to end; FVector is double under LWC):
+ *   WorldPos_cm     = (CanonicalPos_km - AnchorPos_km) * 100000.0   // CanonicalKmToWorldCm
+ *   CanonicalPos_km = WorldPos_cm / 100000.0 + AnchorPos_km         // WorldCmToCanonicalKm
  * ```
  * 
  * Example Scenarios:
@@ -79,6 +80,10 @@ public:
     // Convert canonical solar-frame position (km) into this world's cm position.
     UFUNCTION(BlueprintCallable, Category="Frame")
     FVector CanonicalKmToWorldCm(const FVector& CanonicalPosKm) const;
+
+    // Inverse of CanonicalKmToWorldCm: this world's cm position back to canonical km.
+    UFUNCTION(BlueprintCallable, Category="Frame")
+    FVector WorldCmToCanonicalKm(const FVector& WorldPosCm) const;
 
     // Convenience: get Moon world position in this world.
     UFUNCTION(BlueprintCallable, Category="Frame")

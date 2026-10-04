@@ -710,7 +710,8 @@ void Tick(float DeltaTime)
 ```cpp
 // Use WorldFrameSubsystem for conversions
 UWorldFrameSubsystem* Frame = GetWorld()->GetSubsystem<UWorldFrameSubsystem>();
-FVector WorldPos = Frame->CanonicalToWorld(KmPosition);
+FVector WorldPosCm = Frame->CanonicalKmToWorldCm(KmPosition);
+FVector CanonicalKm = Frame->WorldCmToCanonicalKm(WorldPosCm);
 ```
 
 **DON'T:**
